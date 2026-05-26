@@ -40,16 +40,70 @@ echo "$CURRENT_USER ALL=(root) NOPASSWD: /usr/local/sbin/keyd-aplicar-conf" | su
 sudo chmod 440 /etc/sudoers.d/teclado-indicador-keyd
 sudo visudo -cf /etc/sudoers.d/teclado-indicador-keyd
 
-echo "Installing autoinicio..."
+echo "Installing autostart launcher..."
+cat > "$HOME/.local/bin/uok-indicator-start" <<'LAUNCHER'
+#!/bin/bash
+
+sleep 10
+
+LOG="$HOME/.cache/urownkeyboard/indicator.log"
+INDICATOR="$HOME/.local/bin/teclado-indicador.py"
+LOCKDIR="/tmp/uok-indicator-$USER.lock"
+
+mkdir -p "$HOME/.cache/urownkeyboard"
+
+{
+    echo "---- UrOwnKeyboard indicator start: $(date) ----"
+
+    if [ ! -f "$INDICATOR" ]; then
+        echo "Indicator not found: $INDICATOR"
+        exit 1
+    fi
+
+    rm -rf "$LOCKDIR"
+
+    if mkdir "$LOCKDIR" 2>/dev/null; then
+        trap 'rmdir "$LOCKDIR" 2>/dev/null || true' EXIT
+
+        echo "Starting indicator with clean environment..."
+
+        exec env -i \
+            HOME="$HOME" \
+            USER="$USER" \
+            LOGNAME="$USER" \
+            SHELL="/bin/bash" \
+            DISPLAY="${DISPLAY:-}" \
+            WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+            XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
+            DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+            XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+            XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-}" \
+            DESKTOP_SESSION="${DESKTOP_SESSION:-}" \
+            PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/bin" \
+            /usr/bin/python3 "$INDICATOR"
+    else
+        echo "Could not create lock directory: $LOCKDIR"
+        exit 1
+    fi
+} >> "$LOG" 2>&1
+LAUNCHER
+
+chmod +x "$HOME/.local/bin/uok-indicator-start"
+
+
+echo "Installing autostart entry..."
 cat > "$HOME/.config/autostart/teclado-indicador.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Custom keyboard indicator
-Comment=Custom menu for input sources, XKB layouts and keyd
-Exec=$HOME/.local/bin/teclado-indicador.py
+Name=UrOwnKeyboard
+Comment=Custom keyboard layout indicator
+Exec=$HOME/.local/bin/uok-indicator-start
 Icon=input-keyboard
 Terminal=false
 X-GNOME-Autostart-enabled=true
+Hidden=false
+NoDisplay=false
+StartupNotify=false
 DESKTOP
 
 echo "Checking GNOME integration..."
