@@ -38,7 +38,7 @@ echo "Configurando sudoers..."
 CURRENT_USER="$(whoami)"
 echo "$CURRENT_USER ALL=(root) NOPASSWD: /usr/local/sbin/keyd-aplicar-conf" | sudo tee /etc/sudoers.d/teclado-indicador-keyd > /dev/null
 sudo chmod 440 /etc/sudoers.d/teclado-indicador-keyd
-sudo visudo -c
+sudo visudo -cf /etc/sudoers.d/teclado-indicador-keyd
 
 echo "Installing autoinicio..."
 cat > "$HOME/.config/autostart/teclado-indicador.desktop" <<DESKTOP
