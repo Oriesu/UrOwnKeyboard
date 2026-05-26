@@ -141,34 +141,30 @@ def load_profiles():
 
 
 def activar_profile(profile):
-    profile_id = profile.get("id")
+    layout_id = profile["id"]
+    keyd_conf = profile.get("keyd_conf")
 
-    if not profile_id:
-        subprocess.run([
-            "zenity", "--error",
-            "--title", "UrOwnKeyboard",
-            "--text", "Invalid imported configuration."
-        ], check=False)
-        return
+    current = dict(profile)
+    current["type"] = "imported-profile"
 
-    result = subprocess.run(
-        ["uok", "activate", profile_id],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
     )
 
-    if result.returncode != 0:
-        msg = result.stderr.strip() or result.stdout.strip() or "Could not activate configuration."
-        subprocess.run([
-            "zenity", "--error",
-            "--title", "UrOwnKeyboard",
-            "--text", msg
-        ], check=False)
-        return
+    cmds = [
+        f'setxkbmap -I"$HOME/.xkb" {shlex.quote(layout_id)}',
+    ]
 
-    reiniciar_indicador()
+    if keyd_conf:
+        cmds.append(f"sudo /usr/local/sbin/keyd-aplicar-conf {shlex.quote(keyd_conf)}")
+    else:
+        cmds.append("sudo /usr/local/sbin/keyd-teclado-modo normal")
 
+    cmds.append(
+        f'notify-send "Keyboard" {shlex.quote(profile["name"] + " activated")}'
+    )
+
+    run(" && ".join(cmds))
 
 def importar_configuracion(_):
     name = sh(
@@ -305,21 +301,7 @@ def eliminar_configuracion(_):
     reiniciar_indicador()
 
 
-def get_current_profile():
-    if CURRENT_PROFILE.exists():
-        try:
-            return json.loads(CURRENT_PROFILE.read_text())
-        except Exception:
-            return None
-    return None
-
-
 def get_xkb_spec_actual():
-    profile = get_current_profile()
-
-    if profile and profile.get("type") == "imported-profile" and profile.get("id"):
-        return profile["id"]
-
     query = sh("setxkbmap -query")
     layout = ""
     variant = ""
@@ -337,7 +319,6 @@ def get_xkb_spec_actual():
         return f"{layout}({variant})"
 
     return layout
-
 
 
 def mostrar_distribucion_actual(_):
@@ -415,7 +396,13 @@ def mostrar_configuracion_completa(_):
         info.append("=" * 80)
         info.append("")
 
-        profile = get_current_profile()
+        profile = None
+
+        if CURRENT_PROFILE.exists():
+            try:
+                profile = json.loads(CURRENT_PROFILE.read_text())
+            except Exception:
+                profile = None
 
         if profile:
             info.append(f"Name: {profile.get('name', 'unnamed')}")
@@ -429,16 +416,6 @@ def mostrar_configuracion_completa(_):
 
             if profile.get("xkb_file"):
                 info.append(f"XKB file: {profile.get('xkb_file')}")
-
-                info.append("")
-                info.append("XKB FILE CONTENT")
-                info.append("=" * 80)
-                info.append("")
-
-                try:
-                    info.append(Path(profile.get("xkb_file")).read_text())
-                except Exception:
-                    info.append("Could not read the associated XKB file.")
 
             keyd_conf = profile.get("keyd_conf")
 

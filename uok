@@ -156,21 +156,33 @@ def validate_xkb(layout_id):
 
 
 def apply_xkb(layout_id):
+    cmd = (
+        f'setxkbmap -I"{HOME}/.xkb" -layout {shlex.quote(layout_id)} -print '
+        f'| xkbcomp -I"{HOME}/.xkb" -w 0 - "$DISPLAY"'
+    )
+
     return subprocess.run(
-        ["bash", "-lc", f'setxkbmap -I"{HOME}/.xkb" -layout {shlex.quote(layout_id)}'],
+        ["bash", "-lc", cmd],
         text=True,
     )
 
 
 def apply_keyd(keyd_conf):
     if keyd_conf:
+        subprocess.run(
+            ["sudo", "systemctl", "enable", "--now", "keyd"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+
         return subprocess.run(
-            ["bash", "-lc", f"sudo /usr/local/sbin/keyd-aplicar-conf {shlex.quote(keyd_conf)}"],
+            ["sudo", "/usr/local/sbin/keyd-aplicar-conf", str(keyd_conf)],
             text=True,
         )
 
     return subprocess.run(
-        ["bash", "-lc", "sudo /usr/local/sbin/keyd-teclado-modo normal 2>/dev/null || true"],
+        ["bash", "-lc", "sudo systemctl stop keyd 2>/dev/null || true"],
         text=True,
     )
 
@@ -291,15 +303,19 @@ def cmd_activate(args):
     layout_id = profile["id"]
     keyd_conf = profile.get("keyd_conf")
 
+    # Apply keyd first. Reloading keyd can reset the XKB map.
+    result = apply_keyd(keyd_conf)
+
+    if result.returncode != 0:
+        raise SystemExit("keyd could not be applied.")
+
+    subprocess.run(["sleep", "1"], text=True)
+
+    # Apply XKB last, using xkbcomp. This is the method that works manually.
     result = apply_xkb(layout_id)
 
     if result.returncode != 0:
         raise SystemExit("Could not apply the XKB layout.")
-
-    result = apply_keyd(keyd_conf)
-
-    if result.returncode != 0:
-        raise SystemExit("The layout was applied, but keyd could not be applied.")
 
     current = dict(profile)
     current["type"] = "imported-profile"
