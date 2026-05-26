@@ -1,4 +1,46 @@
+# Backups y archivos rotos generados durante pruebas
+*.bak
+*.bak.*
+*.broken
+*.broken.*
+*.tmp
+*.old
+*.orig
+*~
 
-# Python cache
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+
+# Archivos locales de configuración/estado
+.env
+.env.*
+*.local
+*.swp
+*.swo
+
+# Editores
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Paquetes/artefactos generados
+dist/
+build/
+*.egg-info/
+
+# Archivos generados por instalación local, si alguna vez aparecen en el repo
+teclado-indicador.desktop
