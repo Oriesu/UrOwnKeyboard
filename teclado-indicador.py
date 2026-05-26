@@ -115,7 +115,7 @@ def activar_gnome_source(index, source_type, source_id):
     )
 
     cmds = [
-        "sudo /usr/local/sbin/keyd-teclado-modo normal",
+        "sudo /usr/local/sbin/keyd-aplicar-conf --off",
         f"gsettings set org.gnome.desktop.input-sources current {index}",
     ]
 

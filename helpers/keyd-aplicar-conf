@@ -15,7 +15,19 @@ if [ -z "$USER_HOME" ] || [ ! -d "$USER_HOME" ]; then
     exit 1
 fi
 
+if [ "$1" = "--off" ]; then
+    systemctl stop keyd 2>/dev/null || true
+    systemctl reset-failed keyd 2>/dev/null || true
+    exit 0
+fi
+
 ALLOWED_DIR="$USER_HOME/.config/teclado-indicador/keyd"
+
+if [ -z "$1" ]; then
+    echo "Missing keyd configuration path"
+    systemctl stop keyd 2>/dev/null || true
+    exit 1
+fi
 
 CONF="$(realpath "$1")"
 ALLOWED="$(realpath "$ALLOWED_DIR")"
@@ -23,10 +35,24 @@ ALLOWED="$(realpath "$ALLOWED_DIR")"
 case "$CONF" in
   "$ALLOWED"/*)
     cp "$CONF" /etc/keyd/default.conf
-    keyd reload
+
+    if ! systemctl enable --now keyd; then
+        echo "Could not start keyd"
+        systemctl stop keyd 2>/dev/null || true
+        systemctl reset-failed keyd 2>/dev/null || true
+        exit 1
+    fi
+
+    if ! keyd reload; then
+        echo "Could not reload keyd"
+        systemctl stop keyd 2>/dev/null || true
+        systemctl reset-failed keyd 2>/dev/null || true
+        exit 1
+    fi
     ;;
   *)
     echo "Path not allowed: $CONF"
+    systemctl stop keyd 2>/dev/null || true
     exit 1
     ;;
 esac

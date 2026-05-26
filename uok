@@ -169,20 +169,13 @@ def apply_xkb(layout_id):
 
 def apply_keyd(keyd_conf):
     if keyd_conf:
-        subprocess.run(
-            ["sudo", "systemctl", "enable", "--now", "keyd"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-
         return subprocess.run(
             ["sudo", "/usr/local/sbin/keyd-aplicar-conf", str(keyd_conf)],
             text=True,
         )
 
     return subprocess.run(
-        ["bash", "-lc", "sudo systemctl stop keyd 2>/dev/null || true"],
+        ["sudo", "/usr/local/sbin/keyd-aplicar-conf", "--off"],
         text=True,
     )
 
