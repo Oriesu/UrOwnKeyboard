@@ -4,14 +4,14 @@ set -e
 REAL_USER="${SUDO_USER:-$USER}"
 
 if [ "$REAL_USER" = "root" ]; then
-    echo "No se pudo detectar el usuario real"
+    echo "Could not detect the real user"
     exit 1
 fi
 
 USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
 
 if [ -z "$USER_HOME" ] || [ ! -d "$USER_HOME" ]; then
-    echo "No se pudo detectar HOME para $REAL_USER"
+    echo "Could not detect HOME for $REAL_USER"
     exit 1
 fi
 
@@ -26,7 +26,7 @@ case "$CONF" in
     keyd reload
     ;;
   *)
-    echo "Ruta no permitida: $CONF"
+    echo "Path not allowed: $CONF"
     exit 1
     ;;
 esac

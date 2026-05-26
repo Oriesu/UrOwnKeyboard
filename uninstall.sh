@@ -14,4 +14,4 @@ rm -rf "$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
 sudo rm -f /usr/local/sbin/keyd-aplicar-conf
 sudo rm -f /etc/sudoers.d/teclado-indicador-keyd
 
-echo "Desinstalado. Las configuraciones importadas en ~/.config/teclado-indicador no se han borrado."
+echo "Uninstalled. Imported configurations in ~/.config/teclado-indicador were not deleted."

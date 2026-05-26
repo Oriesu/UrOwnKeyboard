@@ -75,12 +75,12 @@ def get_sources():
 
 def source_label(source_type, source_id):
     names = {
-        "es": "Español",
-        "us": "Inglés US",
-        "de": "Alemán",
-        "fr": "Francés",
+        "es": "Spanish",
+        "us": "US English",
+        "de": "German",
+        "fr": "French",
         "it": "Italiano",
-        "pt": "Portugués",
+        "pt": "Portuguese",
     }
 
     if source_type == "xkb":
@@ -123,7 +123,7 @@ def activar_gnome_source(index, source_type, source_id):
         cmds.append(set_xkb_from_id(source_id))
 
     cmds.append(
-        f'notify-send "Teclado" {shlex.quote(label + " activado")}'
+        f'notify-send "Keyboard" {shlex.quote(label + " activated")}'
     )
 
     run(" && ".join(cmds))
@@ -161,7 +161,7 @@ def activar_profile(profile):
         cmds.append("sudo /usr/local/sbin/keyd-teclado-modo normal")
 
     cmds.append(
-        f'notify-send "Teclado" {shlex.quote(profile["name"] + " activado")}'
+        f'notify-send "Keyboard" {shlex.quote(profile["name"] + " activated")}'
     )
 
     run(" && ".join(cmds))
@@ -169,8 +169,8 @@ def activar_profile(profile):
 def importar_configuracion(_):
     name = sh(
         'zenity --entry '
-        '--title="Importar teclado" '
-        '--text="Nombre de la configuración:" '
+        '--title="Import keyboard" '
+        '--text="Configuration name:" '
         '|| true'
     )
 
@@ -182,7 +182,7 @@ def importar_configuracion(_):
 
     xkb_file = sh(
         'zenity --file-selection '
-        '--title="Selecciona archivo XKB / symbols" '
+        '--title="Select XKB / symbols file" '
         '|| true'
     )
 
@@ -215,9 +215,9 @@ def importar_configuracion(_):
     )
 
     if layout_id != base_id:
-        notify("Teclado", f"Configuración {name} importada como {layout_id}")
+        notify("Keyboard", f"Configuration {name} imported as {layout_id}")
     else:
-        notify("Teclado", f"Configuración {name} importada")
+        notify("Keyboard", f"Configuration {name} imported")
 
     reiniciar_indicador()
 
@@ -247,7 +247,7 @@ def eliminar_configuracion(_):
     profiles = load_profiles()
 
     if not profiles:
-        notify("Teclado", "No hay configuraciones importadas para eliminar")
+        notify("Keyboard", "There are no imported configurations to delete")
         return
 
     opciones = []
@@ -259,10 +259,10 @@ def eliminar_configuracion(_):
 
     cmd = (
         'zenity --list '
-        '--title="Eliminar configuración" '
-        '--text="Selecciona la configuración que quieres eliminar:" '
+        '--title="Delete configuration" '
+        '--text="Select the configuration you want to delete:" '
         '--column="ID" '
-        '--column="Nombre" '
+        '--column="Name" '
         '--hide-column=1 '
         '--print-column=1 '
         f'{quoted_options} '
@@ -281,8 +281,8 @@ def eliminar_configuracion(_):
 
     confirm = sh(
         'zenity --question '
-        '--title="Eliminar configuración" '
-        f'--text={shlex.quote("¿Eliminar la configuración «" + profile["name"] + "»?")} '
+        '--title="Delete configuration" '
+        f'--text={shlex.quote("Delete configuration “" + profile["name"] + "”?")} '
         '&& echo yes || true'
     )
 
@@ -297,7 +297,7 @@ def eliminar_configuracion(_):
     if str(profile_file).startswith(str(PROFILES.resolve()) + "/") and profile_file.exists():
         profile_file.unlink()
 
-    notify("Teclado", f"Configuración {profile['name']} eliminada")
+    notify("Keyboard", f"Configuration {profile['name']} deleted")
     reiniciar_indicador()
 
 
@@ -326,16 +326,16 @@ def mostrar_distribucion_actual(_):
         spec = get_xkb_spec_actual()
 
         if not spec:
-            notify("Teclado", "No se pudo detectar la distribución actual")
+            notify("Keyboard", "Could not detect the current layout")
             return
 
         run(
             f'gkbd-keyboard-display -l {shlex.quote(spec)} '
-            f'|| notify-send "Teclado" "No se pudo abrir el visor para {spec}"'
+            f'|| notify-send "Keyboard" "No se pudo abrir el visor para {spec}"'
         )
 
     except Exception:
-        notify("Teclado", "No se pudo abrir el visor de distribución actual")
+        notify("Keyboard", "Could not open the current layout viewer")
 
 
 def mostrar_texto(title, content):
@@ -358,7 +358,7 @@ def mostrar_texto(title, content):
             proc.stdin.close()
 
     except Exception:
-        notify("Teclado", "No se pudo abrir la ventana de información")
+        notify("Keyboard", "Could not open the information window")
 
 
 def mostrar_configuracion_completa(_):
@@ -368,19 +368,19 @@ def mostrar_configuracion_completa(_):
         if spec:
             run(
                 f'gkbd-keyboard-display -l {shlex.quote(spec)} '
-                f'|| notify-send "Teclado" "No se pudo abrir el visor para {spec}"'
+                f'|| notify-send "Keyboard" "No se pudo abrir el visor para {spec}"'
             )
 
         info = []
 
-        info.append("CONFIGURACIÓN ACTUAL")
+        info.append("CURRENT CONFIGURATION")
         info.append("=" * 80)
         info.append("")
 
         if spec:
-            info.append(f"Layout XKB activo: {spec}")
+            info.append(f"Active XKB layout: {spec}")
         else:
-            info.append("Layout XKB activo: no detectado")
+            info.append("Active XKB layout: no detectado")
 
         info.append("")
         info.append("setxkbmap -query")
@@ -392,7 +392,7 @@ def mostrar_configuracion_completa(_):
             info.append("No se pudo leer setxkbmap -query")
 
         info.append("")
-        info.append("PERFIL UR OWN KEYBOARD")
+        info.append("UR OWN KEYBOARD PROFILE")
         info.append("=" * 80)
         info.append("")
 
@@ -405,49 +405,49 @@ def mostrar_configuracion_completa(_):
                 profile = None
 
         if profile:
-            info.append(f"Nombre: {profile.get('name', 'sin nombre')}")
-            info.append(f"Tipo: {profile.get('type', 'desconocido')}")
+            info.append(f"Name: {profile.get('name', 'unnamed')}")
+            info.append(f"Type: {profile.get('type', 'unknown')}")
 
             if profile.get("id"):
                 info.append(f"ID: {profile.get('id')}")
 
             if profile.get("source_id"):
-                info.append(f"Fuente GNOME: {profile.get('source_id')}")
+                info.append(f"GNOME source: {profile.get('source_id')}")
 
             if profile.get("xkb_file"):
-                info.append(f"Archivo XKB: {profile.get('xkb_file')}")
+                info.append(f"XKB file: {profile.get('xkb_file')}")
 
             keyd_conf = profile.get("keyd_conf")
 
             info.append("")
 
             if keyd_conf:
-                info.append("KEYD ACTIVO")
+                info.append("ACTIVE KEYD")
                 info.append("=" * 80)
                 info.append("")
-                info.append(f"Archivo keyd: {keyd_conf}")
+                info.append(f"keyd file: {keyd_conf}")
                 info.append("")
                 info.append("-" * 80)
 
                 try:
                     info.append(Path(keyd_conf).read_text())
                 except Exception:
-                    info.append("No se pudo leer el archivo keyd asociado.")
+                    info.append("Could not read the associated keyd file.")
             else:
-                info.append("KEYD ACTIVO")
+                info.append("ACTIVE KEYD")
                 info.append("=" * 80)
                 info.append("")
-                info.append("Esta configuración no tiene keyd.conf asociado.")
-                info.append("Si es una fuente normal de GNOME, se usa keyd en modo normal.")
+                info.append("This configuration has no associated keyd.conf.")
+                info.append("If this is a regular GNOME input source, keyd is used in normal mode.")
         else:
-            info.append("No hay perfil activo registrado por UrOwnKeyboard.")
+            info.append("No active profile registered by UrOwnKeyboard.")
             info.append("")
-            info.append("Esto puede pasar si el teclado actual fue cambiado fuera del indicador.")
+            info.append("This can happen if the current keyboard was changed outside the indicator.")
 
-        mostrar_texto("Configuración completa", "\n".join(info))
+        mostrar_texto("Full configuration", "\n".join(info))
 
     except Exception:
-        notify("Teclado", "No se pudo mostrar la configuración completa")
+        notify("Keyboard", "Could not show the full configuration")
 
 
 def crear_menu():
@@ -481,19 +481,19 @@ def crear_menu():
 
     menu.append(Gtk.SeparatorMenuItem())
 
-    item_complete = Gtk.MenuItem(label="Mostrar configuración completa")
+    item_complete = Gtk.MenuItem(label="Show full configuration")
     item_complete.connect("activate", mostrar_configuracion_completa)
     menu.append(item_complete)
 
-    item_import = Gtk.MenuItem(label="Importar configuración…")
+    item_import = Gtk.MenuItem(label="Import configuration…")
     item_import.connect("activate", importar_configuracion)
     menu.append(item_import)
 
-    item_delete = Gtk.MenuItem(label="Eliminar configuración…")
+    item_delete = Gtk.MenuItem(label="Delete configuration…")
     item_delete.connect("activate", eliminar_configuracion)
     menu.append(item_delete)
 
-    item_refresh = Gtk.MenuItem(label="Recargar lista")
+    item_refresh = Gtk.MenuItem(label="Reload list")
     item_refresh.connect("activate", lambda _: reiniciar_indicador())
     menu.append(item_refresh)
 
@@ -513,7 +513,7 @@ indicator = AppIndicator3.Indicator.new(
 )
 
 indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
-indicator.set_title("Teclado")
+indicator.set_title("Keyboard")
 
 try:
     indicator.set_label("⌨", "")
