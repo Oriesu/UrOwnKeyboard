@@ -13,9 +13,17 @@ Está pensado para sustituir el menú básico de fuentes de entrada de GNOME por
 - Permite asociar un archivo `keyd.conf` a cada distribución.
 - Aplica automáticamente XKB + keyd al seleccionar una configuración.
 - Permite eliminar configuraciones importadas.
-- Permite mostrar la distribución XKB activa.
+- Permite mostrar la configuración completa activa: visor XKB, perfil seleccionado y keyd.conf asociado.
 - Oculta el indicador nativo de teclado de GNOME.
 - Se inicia automáticamente al iniciar sesión.
+
+## Compatibilidad
+
+UrOwnKeyboard usa XKB y keyd como base, por lo que el sistema de perfiles puede adaptarse a otros entornos Linux compatibles.
+
+La interfaz gráfica incluida actualmente está orientada a GNOME y escritorios compatibles con AppIndicator/Ayatana.
+
+La integración que oculta el indicador nativo de teclado es específica de GNOME.
 
 ## Instalación rápida
 
@@ -179,9 +187,7 @@ Para aplicar configuraciones keyd sin pedir contraseña cada vez, el instalador 
 
 Ese helper sólo acepta archivos situados dentro de la carpeta de configuración del usuario.
 
-## Limitaciones reales
+## Limitaciones
 
-- Tras instalar, puede ser necesario cerrar sesión y volver a entrar para que GNOME detecte la extensión.
-- El visor gráfico muestra XKB, pero no los remapeos internos de keyd.
-- El proyecto está pensado para GNOME.
-
+- Tras instalar, puede ser necesario cerrar sesión y volver a entrar para que GNOME detecte la extensión que oculta el indicador nativo de teclado.
+- La extensión para ocultar el indicador nativo es específica de GNOME. En otros escritorios puede ser necesario ocultar manualmente su propio indicador de teclado.
