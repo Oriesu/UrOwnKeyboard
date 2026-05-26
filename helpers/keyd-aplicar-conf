@@ -1,0 +1,32 @@
+#!/bin/bash
+set -e
+
+REAL_USER="${SUDO_USER:-$USER}"
+
+if [ "$REAL_USER" = "root" ]; then
+    echo "No se pudo detectar el usuario real"
+    exit 1
+fi
+
+USER_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
+
+if [ -z "$USER_HOME" ] || [ ! -d "$USER_HOME" ]; then
+    echo "No se pudo detectar HOME para $REAL_USER"
+    exit 1
+fi
+
+ALLOWED_DIR="$USER_HOME/.config/teclado-indicador/keyd"
+
+CONF="$(realpath "$1")"
+ALLOWED="$(realpath "$ALLOWED_DIR")"
+
+case "$CONF" in
+  "$ALLOWED"/*)
+    cp "$CONF" /etc/keyd/default.conf
+    keyd reload
+    ;;
+  *)
+    echo "Ruta no permitida: $CONF"
+    exit 1
+    ;;
+esac

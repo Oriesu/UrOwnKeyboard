@@ -1,0 +1,7 @@
+{
+  "uuid": "hide-input-source@teclado-indicador",
+  "name": "Hide GNOME Input Source Indicator",
+  "description": "Oculta el indicador nativo de fuentes de entrada de GNOME.",
+  "shell-version": ["46"],
+  "version": 1
+}
