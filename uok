@@ -59,6 +59,14 @@ def refresh_graphical_indicator():
         start_new_session=True,
     )
 
+
+def ensure_dirs():
+    CONFIG.mkdir(parents=True, exist_ok=True)
+    PROFILES.mkdir(parents=True, exist_ok=True)
+    KEYD_DIR.mkdir(parents=True, exist_ok=True)
+    XKB_DIR.mkdir(parents=True, exist_ok=True)
+    USER_XKB.mkdir(parents=True, exist_ok=True)
+
 def safe_id(name):
     name = unicodedata.normalize("NFKD", name)
     name = name.encode("ascii", "ignore").decode("ascii")
@@ -366,6 +374,48 @@ def cmd_show_keyd(_args):
     print(Path(keyd_conf).read_text())
 
 
+
+def cmd_restore(_args):
+    ensure_dirs()
+
+    if not CURRENT_PROFILE.exists():
+        result = apply_keyd("")
+        if result.returncode == 0:
+            print("No active UrOwnKeyboard profile. keyd disabled.")
+            return
+        raise SystemExit("No active UrOwnKeyboard profile, but keyd could not be disabled.")
+
+    try:
+        profile = json.loads(CURRENT_PROFILE.read_text())
+    except Exception:
+        apply_keyd("")
+        raise SystemExit("Invalid current profile file. keyd disabled.")
+
+    profile_type = profile.get("type")
+
+    if profile_type == "imported-profile":
+        profile_id = profile.get("id")
+
+        if not profile_id:
+            apply_keyd("")
+            raise SystemExit("Invalid imported profile. keyd disabled.")
+
+        class Args:
+            pass
+
+        args = Args()
+        args.profile = profile_id
+
+        return cmd_activate(args)
+
+    result = apply_keyd("")
+
+    if result.returncode == 0:
+        print("Regular input source restored. keyd disabled.")
+        return
+
+    raise SystemExit("Regular input source restored, but keyd could not be disabled.")
+
 def main():
     parser = argparse.ArgumentParser(
         prog="uok",
@@ -378,6 +428,7 @@ def main():
   uok delete my_keyboard
   uok current
   uok show-keyd
+  uok restore
 
 Command-specific help:
   uok import -h
@@ -411,6 +462,9 @@ Command-specific help:
 
     p = sub.add_parser("show-keyd", help="Show the keyd.conf associated with the active configuration")
     p.set_defaults(func=cmd_show_keyd)
+
+    p = sub.add_parser("restore", help="Restore the last active UrOwnKeyboard configuration")
+    p.set_defaults(func=cmd_restore)
 
     args = parser.parse_args()
     args.func(args)
