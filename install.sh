@@ -120,16 +120,28 @@ else
 fi
 
 echo "Starting indicator..."
-pkill -f "$HOME/.local/bin/teclado-indicador.py" 2>/dev/null || true
-pkill -f "teclado-indicador.py" 2>/dev/null || true
+pkill -f teclado-indicador.py 2>/dev/null || true
+pkill -f uok-indicator-start 2>/dev/null || true
+rm -rf "/tmp/uok-indicator-$USER.lock"
 
-nohup "$HOME/.local/bin/teclado-indicador.py" >/tmp/teclado-indicador.log 2>&1 &
-sleep 1
+"$HOME/.local/bin/uok-indicator-start" &
+
+sleep 12
 
 if pgrep -af "teclado-indicador.py" >/dev/null; then
     echo "Indicator started successfully."
 else
     echo "Could not confirm that the indicator is still running."
+    echo "Manual test:"
+    echo "  $HOME/.local/bin/uok-indicator-start"
+    echo "Log:"
+    echo "  cat $HOME/.cache/urownkeyboard/indicator.log"
+firm that the indicator is still running."
+    echo "Manual test:"
+    echo "  $HOME/.local/bin/uok-indicator-start"
+    echo "Log:"
+    echo "  cat $HOME/.cache/urownkeyboard/indicator.log"
+firm that the indicator is still running."
     echo "Manual test:"
     echo "  $HOME/.local/bin/teclado-indicador.py"
     echo "Log:"
