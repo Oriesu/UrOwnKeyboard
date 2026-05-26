@@ -50,12 +50,45 @@ chmod +x install.sh uninstall.sh uok
 ./install.sh
 ```
 
+Comprobar que el autoinicio se ha creado:
+
+```bash
+ls -l ~/.config/autostart/teclado-indicador.desktop
+```
+
 Después de instalar, cierra sesión y vuelve a entrar para que GNOME detecte la extensión que oculta el indicador nativo.
 
 Si el indicador nativo de GNOME sigue apareciendo, ejecuta:
 
 ```bash
 gnome-extensions enable hide-input-source@teclado-indicador
+```
+
+## Qué hace el instalador
+
+El script `install.sh`:
+
+- instala las dependencias necesarias;
+- copia `teclado-indicador.py` a `~/.local/bin/`;
+- copia `uok` a `~/.local/bin/`;
+- instala el helper de keyd en `/usr/local/sbin/keyd-aplicar-conf`;
+- crea una regla sudoers limitada para aplicar configuraciones keyd;
+- crea la entrada de autoinicio en `~/.config/autostart/teclado-indicador.desktop`;
+- instala la extensión local de GNOME si detecta GNOME Shell;
+- inicia el indicador gráfico al terminar.
+
+Si la instalación se detiene durante la configuración de sudoers, comprueba que no haya archivos antiguos con permisos incorrectos en `/etc/sudoers.d/`.
+
+Puedes verificarlo con:
+
+```bash
+sudo visudo -c
+```
+
+La regla propia de UrOwnKeyboard se comprueba con:
+
+```bash
+sudo visudo -cf /etc/sudoers.d/teclado-indicador-keyd
 ```
 
 ## Uso gráfico
