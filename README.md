@@ -10,27 +10,7 @@ Incluye:
 - un indicador gráfico compatible con AppIndicator/Ayatana;
 - un editor visual de distribuciones XKB;
 - una integración específica para GNOME que oculta el menú nativo de fuentes de entrada.
-
-## Funciones
-
-- Importar distribuciones XKB desde archivos.
-- Crear distribuciones nuevas desde un editor visual.
-- Usar como base cualquier distribución del sistema, una fuente añadida en la configuración del sistema o una configuración propia de UrOwnKeyboard.
-- Editar teclas visualmente, incluyendo niveles normal, Shift, AltGr y AltGr+Shift.
-- Exportar la distribución editada como archivo XKB.
-- Importar directamente la distribución editada en UrOwnKeyboard.
-- Asociar opcionalmente un archivo `keyd.conf`.
-- Aplicar automáticamente XKB + keyd.
-- Listar configuraciones importadas.
-- Eliminar configuraciones importadas.
-- Mostrar la configuración activa.
-- Mostrar el `keyd.conf` activo.
-- Mostrar una vista completa de la configuración activa.
-- Usar un menú gráfico en la barra superior.
-- Abrir la configuración de teclado del sistema desde el menú gráfico.
-- Ocultar el indicador nativo de teclado de GNOME.
-- Iniciarse automáticamente al iniciar sesión.
-
+  
 ## Instalación rápida
 
 Copia y pega esto en una terminal:
@@ -57,19 +37,33 @@ chmod +x install.sh uninstall.sh uok
 ./install.sh
 ```
 
-Comprobar que el autoinicio se ha creado:
-
-```bash
-ls -l ~/.config/autostart/teclado-indicador.desktop
-```
-
-Después de instalar, cierra sesión y vuelve a entrar para que GNOME detecte la extensión que oculta el indicador nativo.
+Después de instalar, cierra sesión y vuelve a entrar para que GNOME con `Alt + F2`, estrbe `r` y pulsa `Enter`.
 
 Si el indicador nativo de GNOME sigue apareciendo, ejecuta:
 
 ```bash
 gnome-extensions enable hide-input-source@teclado-indicador
 ```
+
+## Funciones
+
+- Importar distribuciones XKB desde archivos.
+- Crear distribuciones nuevas desde un editor visual.
+- Usar como base cualquier distribución del sistema, una fuente añadida en la configuración del sistema o una configuración propia de UrOwnKeyboard.
+- Editar teclas visualmente, incluyendo niveles normal, Shift, AltGr y AltGr+Shift.
+- Exportar la distribución editada como archivo XKB.
+- Importar directamente la distribución editada en UrOwnKeyboard.
+- Asociar opcionalmente un archivo `keyd.conf`.
+- Aplicar automáticamente XKB + keyd.
+- Listar configuraciones importadas.
+- Eliminar configuraciones importadas.
+- Mostrar la configuración activa.
+- Mostrar el `keyd.conf` activo.
+- Mostrar una vista completa de la configuración activa.
+- Usar un menú gráfico en la barra superior.
+- Abrir la configuración de teclado del sistema desde el menú gráfico.
+- Ocultar el indicador nativo de teclado de GNOME.
+- Iniciarse automáticamente al iniciar sesión.
 
 ## Qué hace el instalador
 

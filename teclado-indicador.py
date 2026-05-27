@@ -618,11 +618,6 @@ indicator = AppIndicator3.Indicator.new(
 indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
 indicator.set_title("Keyboard")
 
-try:
-    indicator.set_label("⌨", "")
-except Exception:
-    pass
-
 indicator.set_menu(crear_menu())
 
 Gtk.main()
