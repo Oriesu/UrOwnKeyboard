@@ -17,7 +17,7 @@ Copia y pega esto en una terminal:
 
 ```bash
 sudo apt update
-sudo apt install -y git build-essential python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator x11-xkb-utils fonts-noto-core fonts-noto-extra
+sudo apt install -y git build-essential python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator fonts-noto-core fonts-noto-extra x11-xkb-utils fonts-noto-core fonts-noto-extra
 
 if ! command -v keyd >/dev/null 2>&1; then
     cd /tmp
