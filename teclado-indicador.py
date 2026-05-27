@@ -531,6 +531,148 @@ def abrir_ajustes_teclado(_item=None):
     notify("UrOwnKeyboard", "No se pudo abrir la configuración de teclado del sistema.")
 
 
+
+
+def get_raw_setxkbmap_spec():
+    """
+    Lee el XKB real desde setxkbmap, sin fiarse del perfil guardado por UOK.
+    Devuelve algo como:
+    - es
+    - de
+    - us(intl)
+    - dvorakesprogrammer
+    """
+    try:
+        query = sh("setxkbmap -query")
+    except Exception:
+        return ""
+
+    layout = ""
+    variant = ""
+
+    for line in query.splitlines():
+        if line.startswith("layout:"):
+            layout = line.split(":", 1)[1].strip().split(",")[0].strip()
+        elif line.startswith("variant:"):
+            variant = line.split(":", 1)[1].strip().split(",")[0].strip()
+
+    if not layout:
+        return ""
+
+    if variant:
+        return f"{layout}({variant})"
+
+    return layout
+
+
+def gnome_source_to_setxkbmap_cmd(source_type, source_id):
+    if source_type != "xkb":
+        return ""
+
+    if "+" in source_id:
+        layout, variant = source_id.split("+", 1)
+        return f"setxkbmap {shlex.quote(layout)} {shlex.quote(variant)}"
+
+    return f"setxkbmap {shlex.quote(source_id)}"
+
+
+def get_gnome_current_source():
+    sources = get_sources()
+
+    if not sources:
+        return None
+
+    try:
+        current_raw = sh("gsettings get org.gnome.desktop.input-sources current")
+        current = int(str(current_raw).replace("uint32", "").strip())
+    except Exception:
+        current = 0
+
+    if current < 0 or current >= len(sources):
+        current = 0
+
+    source = sources[current]
+
+    if len(source) != 2:
+        return None
+
+    source_type, source_id = source
+
+    return {
+        "index": current,
+        "source_type": source_type,
+        "source_id": source_id,
+        "name": source_label(source_type, source_id),
+    }
+
+
+def guardar_gnome_source_actual(source):
+    current = {
+        "type": "gnome-source",
+        "name": source["name"],
+        "source_type": source["source_type"],
+        "source_id": source["source_id"],
+        "keyd_conf": None,
+    }
+
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
+    )
+
+
+def aplicar_keyd_de_profile_o_apagar(profile):
+    keyd_conf = profile.get("keyd_conf") if profile else None
+
+    if keyd_conf:
+        keyd_path = Path(keyd_conf).expanduser()
+
+        if keyd_path.exists():
+            run(f"sudo /usr/local/sbin/keyd-aplicar-conf {shlex.quote(str(keyd_path))}")
+            return
+
+    run("sudo /usr/local/sbin/keyd-aplicar-conf --off")
+
+
+def sincronizar_estado_al_arrancar():
+    """
+    Al arrancar:
+    1. Mira el XKB real.
+    2. Si el XKB real coincide con un perfil importado de UOK, aplica su keyd.
+    3. Si no coincide, toma la fuente real de GNOME como verdad, guarda ese estado
+       y apaga keyd personalizado.
+    Así evitamos arrancar con QWERTY normal pero keyd personalizado antiguo.
+    """
+    profile = get_current_profile()
+    raw_spec = get_raw_setxkbmap_spec()
+
+    if profile and profile.get("type") == "imported-profile" and profile.get("id"):
+        profile_id = profile.get("id")
+
+        if raw_spec == profile_id or raw_spec.startswith(profile_id + "("):
+            aplicar_keyd_de_profile_o_apagar(profile)
+            return
+
+    source = get_gnome_current_source()
+
+    if source:
+        guardar_gnome_source_actual(source)
+
+        cmds = ["sudo /usr/local/sbin/keyd-aplicar-conf --off"]
+
+        setxkbmap_cmd = gnome_source_to_setxkbmap_cmd(
+            source["source_type"],
+            source["source_id"],
+        )
+
+        if setxkbmap_cmd:
+            cmds.append(setxkbmap_cmd)
+
+        run(" && ".join(cmds))
+        return
+
+    aplicar_keyd_de_profile_o_apagar(profile)
+
+
 def crear_menu():
     menu = Gtk.Menu()
 
@@ -618,6 +760,7 @@ indicator = AppIndicator3.Indicator.new(
 indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
 indicator.set_title("Keyboard")
 
+sincronizar_estado_al_arrancar()
 indicator.set_menu(crear_menu())
 
 Gtk.main()
