@@ -416,6 +416,43 @@ def cmd_restore(_args):
 
     raise SystemExit("Regular input source restored, but keyd could not be disabled.")
 
+
+def cmd_editor(_args):
+    import os
+    import subprocess
+    import sys
+
+    candidates = [
+        Path(__file__).resolve().parent / "uok-layout-editor.py",
+        HOME / ".local" / "bin" / "uok-layout-editor.py",
+        Path.cwd() / "uok-layout-editor.py",
+    ]
+
+    editor = next((path for path in candidates if path.exists()), None)
+
+    if editor is None:
+        raise SystemExit(
+            "No se encontró uok-layout-editor.py.\n"
+            "Ejecuta ./install.sh o abre el editor desde la raíz del repositorio."
+        )
+
+    env = os.environ.copy()
+
+    if not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY"):
+        raise SystemExit("No hay sesión gráfica disponible para abrir el editor.")
+
+    subprocess.Popen(
+        [sys.executable, str(editor)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        start_new_session=True,
+    )
+
+    print("Editor visual abierto.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="uok",
@@ -465,6 +502,13 @@ Command-specific help:
 
     p = sub.add_parser("restore", help="Restore the last active UrOwnKeyboard configuration")
     p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser(
+        "editor",
+        aliases=["open-editor", "visual-editor", "layout-editor"],
+        help="Open the visual keyboard layout editor",
+    )
+    p.set_defaults(func=cmd_editor)
 
     args = parser.parse_args()
     args.func(args)

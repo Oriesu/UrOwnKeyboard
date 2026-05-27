@@ -1,0 +1,1363 @@
+#!/usr/bin/env python3
+import os
+import re
+import ctypes
+import json
+import shlex
+import subprocess
+import tempfile
+from pathlib import Path
+
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk
+
+from uok_xkb_symbols import keysym_to_text, text_to_keysym
+from uok_xkb_sources import load_xkb_sources
+
+LEVEL_NAMES = ["Normal", "Shift", "AltGr", "AltGr + Shift"]
+
+SPECIAL_KEYSYMS = [
+    "", "NoSymbol", "Tab", "ISO_Left_Tab", "BackSpace", "Return", "Escape", "Delete", "Insert",
+    "Home", "End", "Prior", "Next", "Left", "Right", "Up", "Down", "space", "Caps_Lock",
+    "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R", "Super_L", "Super_R",
+    "Menu", "ISO_Level3_Shift", "Multi_key",
+]
+
+HOME = Path.home()
+CONFIG = HOME / ".config" / "teclado-indicador"
+CURRENT_PROFILE = CONFIG / "current-profile.json"
+USER_XKB = HOME / ".xkb" / "symbols"
+
+
+KEYSYM_DISPLAY = {
+    "space": "Space",
+    "adiaeresis": "ä",
+    "Adiaeresis": "Ä",
+    "odiaeresis": "ö",
+    "Odiaeresis": "Ö",
+    "udiaeresis": "ü",
+    "Udiaeresis": "Ü",
+    "ssharp": "ß",
+    "section": "§",
+    "degree": "°",
+    "dead_acute": "´",
+    "dead_grave": "`",
+    "dead_circumflex": "^",
+    "dead_diaeresis": "¨",
+    "dead_tilde": "~",
+    "minus": "-",
+    "plus": "+",
+    "equal": "=",
+    "slash": "/",
+    "backslash": "\\",
+    "bar": "|",
+    "comma": ",",
+    "period": ".",
+    "semicolon": ";",
+    "colon": ":",
+    "apostrophe": "'",
+    "quotedbl": '"',
+    "exclam": "!",
+    "question": "?",
+    "parenleft": "(",
+    "parenright": ")",
+    "bracketleft": "[",
+    "bracketright": "]",
+    "braceleft": "{",
+    "braceright": "}",
+    "less": "<",
+    "greater": ">",
+}
+
+LAYOUT_ROWS = [
+    [
+        ("ESC", "Esc", 1.0), ("TLDE", "º", 1.0), ("AE01", "1", 1.0),
+        ("AE02", "2", 1.0), ("AE03", "3", 1.0), ("AE04", "4", 1.0),
+        ("AE05", "5", 1.0), ("AE06", "6", 1.0), ("AE07", "7", 1.0),
+        ("AE08", "8", 1.0), ("AE09", "9", 1.0), ("AE10", "0", 1.0),
+        ("AE11", "'", 1.0), ("AE12", "¡", 1.0), ("BKSP", "⌫", 1.6),
+    ],
+    [
+        ("TAB", "Tab", 1.4), ("AD01", "Q", 1.0), ("AD02", "W", 1.0),
+        ("AD03", "E", 1.0), ("AD04", "R", 1.0), ("AD05", "T", 1.0),
+        ("AD06", "Y", 1.0), ("AD07", "U", 1.0), ("AD08", "I", 1.0),
+        ("AD09", "O", 1.0), ("AD10", "P", 1.0), ("AD11", "`", 1.0),
+        ("AD12", "+", 1.0), ("RTRN", "Enter", 1.5),
+    ],
+    [
+        ("CAPS", "Caps", 1.7), ("AC01", "A", 1.0), ("AC02", "S", 1.0),
+        ("AC03", "D", 1.0), ("AC04", "F", 1.0), ("AC05", "G", 1.0),
+        ("AC06", "H", 1.0), ("AC07", "J", 1.0), ("AC08", "K", 1.0),
+        ("AC09", "L", 1.0), ("AC10", "Ñ", 1.0), ("AC11", "´", 1.0),
+        ("BKSL", "Ç", 1.0),
+    ],
+    [
+        ("LFSH", "Shift", 1.25), ("LSGT", "<", 1.0), ("AB01", "Z", 1.0),
+        ("AB02", "X", 1.0), ("AB03", "C", 1.0), ("AB04", "V", 1.0),
+        ("AB05", "B", 1.0), ("AB06", "N", 1.0), ("AB07", "M", 1.0),
+        ("AB08", ",", 1.0), ("AB09", ".", 1.0), ("AB10", "-", 1.0),
+        ("RTSH", "Shift", 1.8),
+    ],
+    [
+        ("LCTL", "Ctrl", 1.25), ("LWIN", "Super", 1.25), ("LALT", "Alt", 1.25),
+        ("SPCE", "Space", 5.5), ("RALT", "AltGr", 1.25), ("RWIN", "Super", 1.25),
+        ("MENU", "Menu", 1.25), ("RCTL", "Ctrl", 1.25),
+    ],
+]
+
+KEY_BLOCK_RE = re.compile(r"key\s+<([^>]+)>\s*\{(.*?)\};", re.S)
+KEY_SYMBOLS_RE = re.compile(r"\[([^\]]*)\]", re.S)
+KEYCODE_RE = re.compile(r"<([^>]+)>\s*=\s*(\d+)\s*;")
+
+
+def run(cmd):
+    try:
+        return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError as e:
+        return subprocess.CompletedProcess(cmd, 127, "", str(e))
+
+
+def current_uok_profile():
+    current_file = Path.home() / ".config" / "teclado-indicador" / "current-profile.json"
+
+    if not current_file.exists():
+        return None
+
+    try:
+        profile = json.loads(current_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    layout_id = profile.get("id")
+    xkb_file = profile.get("xkb_file")
+
+    if not layout_id:
+        return None
+
+    return {
+        "id": layout_id,
+        "name": profile.get("name") or layout_id,
+        "xkb_file": xkb_file,
+    }
+
+
+def gsettings_value(schema, key):
+    result = run(["gsettings", "get", schema, key])
+
+    if result.returncode != 0:
+        return ""
+
+    return result.stdout.strip()
+
+
+def current_gnome_input_source():
+    schema = "org.gnome.desktop.input-sources"
+
+    current_raw = gsettings_value(schema, "current")
+    sources_raw = gsettings_value(schema, "sources")
+
+    try:
+        current = int(current_raw)
+    except Exception:
+        current = 0
+
+    # Formato típico:
+    # [('xkb', 'es'), ('xkb', 'us')]
+    # o:
+    # @a(ss) [('xkb', 'es'), ('xkb', 'us')]
+    sources = re.findall(r"\('([^']+)'\s*,\s*'([^']+)'\)", sources_raw)
+
+    if not sources or current < 0 or current >= len(sources):
+        return None
+
+    source_type, source_id = sources[current]
+
+    if source_type != "xkb":
+        return None
+
+    return source_id
+
+
+def xkb_text_for_layout(layout_id):
+    home = Path.home()
+
+    cmd = (
+        f'setxkbmap -I"{home}/.xkb" -layout {shlex.quote(layout_id)} -print '
+        f'| xkbcomp -xkb -w 0 - -'
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout
+
+    return ""
+
+
+def display_symbols_text():
+    display = os.environ.get("DISPLAY")
+
+    if not display:
+        return ""
+
+    for cmd in (["xkbcomp", "-xkb", display, "-"], ["xkbcomp", display, "-"]):
+        result = run(cmd)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout
+
+    return ""
+
+
+def load_current_profile():
+    if not CURRENT_PROFILE.exists():
+        return None
+
+    try:
+        return json.loads(CURRENT_PROFILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def parse_include_name(include_name):
+    include_name = (include_name or "").strip()
+
+    m = re.fullmatch(r"([^()]+)\(([^()]+)\)", include_name)
+    if m:
+        return m.group(1), m.group(2)
+
+    return include_name, ""
+
+
+def source_id_to_include(source_id):
+    if not source_id:
+        return ""
+
+    if "+" in source_id:
+        layout, variant = source_id.split("+", 1)
+        return f"{layout}({variant})" if variant else layout
+
+    return source_id
+
+
+def x11_active_group_index():
+    display_name = os.environ.get("DISPLAY")
+    if not display_name:
+        return None
+
+    try:
+        x11 = ctypes.CDLL("libX11.so.6")
+    except Exception:
+        return None
+
+    class XkbStateRec(ctypes.Structure):
+        _fields_ = [
+            ("group", ctypes.c_ubyte),
+            ("locked_group", ctypes.c_ubyte),
+            ("base_group", ctypes.c_ushort),
+            ("latched_group", ctypes.c_ushort),
+            ("mods", ctypes.c_ubyte),
+            ("base_mods", ctypes.c_ubyte),
+            ("latched_mods", ctypes.c_ubyte),
+            ("locked_mods", ctypes.c_ubyte),
+            ("compat_state", ctypes.c_ubyte),
+            ("grab_mods", ctypes.c_ubyte),
+            ("compat_grab_mods", ctypes.c_ubyte),
+            ("lookup_mods", ctypes.c_ubyte),
+            ("compat_lookup_mods", ctypes.c_ubyte),
+            ("ptr_buttons", ctypes.c_ushort),
+        ]
+
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    x11.XkbGetState.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(XkbStateRec)]
+    x11.XkbGetState.restype = ctypes.c_int
+
+    display = x11.XOpenDisplay(display_name.encode())
+    if not display:
+        return None
+
+    try:
+        state = XkbStateRec()
+        XkbUseCoreKbd = 0x0100
+        ok = x11.XkbGetState(display, XkbUseCoreKbd, ctypes.byref(state))
+        if ok == 0:
+            return int(state.group)
+    finally:
+        x11.XCloseDisplay(display)
+
+    return None
+
+
+def setxkbmap_query_groups():
+    result = run(["setxkbmap", "-query"])
+
+    layouts = []
+    variants = []
+
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            clean = line.strip()
+
+            if clean.startswith("layout:"):
+                raw = clean.split(":", 1)[1].strip()
+                layouts = [x.strip() for x in raw.split(",")]
+            elif clean.startswith("variant:"):
+                raw = clean.split(":", 1)[1].strip()
+                variants = [x.strip() for x in raw.split(",")]
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    return list(zip(layouts, variants))
+
+
+def active_xkb_group_include():
+    # Detecta el grupo/layout activo real usando X11/XKB.
+    # Esto cubre el caso donde GNOME cambia el teclado, pero
+    # org.gnome.desktop.input-sources current sigue en 0.
+    group = x11_active_group_index()
+    groups = setxkbmap_query_groups()
+
+    if group is not None and groups and 0 <= group < len(groups):
+        layout, variant = groups[group]
+        if layout:
+            return f"{layout}({variant})" if variant else layout
+
+    # Fallback opcional si el usuario tiene alguna herramienta externa.
+    for cmd in (
+        ["xkb-switch"],
+        ["xkblayout-state", "print", "%s"],
+    ):
+        result = run(cmd)
+        if result.returncode == 0:
+            value = result.stdout.strip()
+            if value:
+                return source_id_to_include(value)
+
+    return ""
+
+
+def gnome_current_include():
+    result = run(["gsettings", "get", "org.gnome.desktop.input-sources", "sources"])
+    if result.returncode != 0:
+        return ""
+
+    sources_text = result.stdout.strip()
+
+    result = run(["gsettings", "get", "org.gnome.desktop.input-sources", "current"])
+    current_index = 0
+
+    if result.returncode == 0:
+        try:
+            current_index = int(result.stdout.strip().replace("uint32", "").strip())
+        except Exception:
+            current_index = 0
+
+    sources = re.findall(r"\('xkb',\s*'([^']+)'\)", sources_text)
+
+    if not sources:
+        return ""
+
+    if current_index < 0 or current_index >= len(sources):
+        current_index = 0
+
+    return source_id_to_include(sources[current_index])
+
+
+def setxkbmap_query_include():
+    groups = setxkbmap_query_groups()
+    if not groups:
+        return ""
+
+    layout, variant = groups[0]
+    if not layout:
+        return ""
+
+    return f"{layout}({variant})" if variant else layout
+
+
+def xkb_dump_from_include(include_name):
+    layout, variant = parse_include_name(include_name)
+
+    if not layout:
+        return ""
+
+    cmd = [
+        "setxkbmap",
+        f"-I{HOME / '.xkb'}",
+        "-layout",
+        layout,
+    ]
+
+    if variant:
+        cmd.extend(["-variant", variant])
+
+    cmd.append("-print")
+
+    printed = run(cmd)
+    if printed.returncode != 0:
+        return ""
+
+    compiled = subprocess.run(
+        ["xkbcomp", f"-I{HOME / '.xkb'}", "-xkb", "-", "-"],
+        input=printed.stdout,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    if compiled.returncode == 0:
+        return compiled.stdout
+
+    return ""
+
+
+def current_display_symbols_text():
+    display = os.environ.get("DISPLAY")
+    if not display:
+        return ""
+
+    for cmd in (["xkbcomp", "-xkb", display, "-"], ["xkbcomp", display, "-"]):
+        result = run(cmd)
+        if result.returncode == 0:
+            return result.stdout
+
+    return ""
+
+
+def active_base_include():
+    profile = load_current_profile()
+
+    if profile:
+        profile_type = profile.get("type")
+
+        if profile_type == "imported-profile" and profile.get("id"):
+            return profile["id"]
+
+        if profile_type == "gnome-source":
+            include = source_id_to_include(profile.get("source_id", ""))
+            if include:
+                return include
+
+    xkb_group_include = active_xkb_group_include()
+    if xkb_group_include:
+        return xkb_group_include
+
+    gnome_include = gnome_current_include()
+    if gnome_include:
+        return gnome_include
+
+    query_include = setxkbmap_query_include()
+    if query_include:
+        return query_include
+
+    return "es"
+
+
+def current_symbols_text():
+    profile = load_current_profile()
+
+    # 1. Perfil importado UOK activo: usar su archivo real.
+    if profile and profile.get("type") == "imported-profile":
+        xkb_file = profile.get("xkb_file")
+
+        if xkb_file:
+            path = Path(xkb_file).expanduser()
+            if path.exists():
+                return path.read_text(encoding="utf-8")
+
+        profile_id = profile.get("id", "")
+        text = xkb_dump_from_include(profile_id)
+        if text:
+            return text
+
+    # 2. Fuente GNOME seleccionada desde el menú de UrOwnKeyboard.
+    # Esto es más fiable que XkbGetState en GNOME, porque el grupo XKB puede seguir
+    # apareciendo como 0 aunque el teclado real haya cambiado.
+    if profile and profile.get("type") == "gnome-source":
+        include = source_id_to_include(profile.get("source_id", ""))
+        text = xkb_dump_from_include(include)
+        if text:
+            return text
+
+    # 3. Grupo XKB activo real, si se puede detectar.
+    xkb_group_include = active_xkb_group_include()
+    text = xkb_dump_from_include(xkb_group_include)
+    if text:
+        return text
+
+    # 4. Fuente GNOME activa por gsettings.
+    gnome_include = gnome_current_include()
+    text = xkb_dump_from_include(gnome_include)
+    if text:
+        return text
+
+    # 5. Fallback setxkbmap.
+    query_include = setxkbmap_query_include()
+    text = xkb_dump_from_include(query_include)
+    if text:
+        return text
+
+    # 6. Último recurso: mapa cargado en DISPLAY.
+    return current_display_symbols_text()
+
+
+def xkb_include_from_current():
+    return active_base_include()
+
+
+def parse_key_symbols(text):
+    out = {}
+
+    for code, body in KEY_BLOCK_RE.findall(text or ""):
+        matches = KEY_SYMBOLS_RE.findall(body)
+        if not matches:
+            continue
+
+        # En dumps reales de xkbcomp puede aparecer:
+        # key <AC10> { [ ntilde, Ntilde ] };
+        # o:
+        # key <AC10> { symbols[Group1]= [ odiaeresis, Odiaeresis ] };
+        symbols_body = matches[-1]
+        parts = []
+
+        for p in symbols_body.replace("\n", " ").split(","):
+            p = p.strip()
+
+            if not p:
+                continue
+
+            if "=" in p:
+                p = p.split("=", 1)[-1].strip()
+
+            if p:
+                parts.append(p)
+
+        if parts:
+            out[code] = parts[:4]
+
+    return out
+
+def parse_keycodes(text):
+    return {int(num): code for code, num in KEYCODE_RE.findall(text or "")}
+
+
+def detected_function_key_row(base_symbols=None, keycode_to_name=None):
+    found = set()
+
+    if base_symbols:
+        found.update(base_symbols.keys())
+
+    if keycode_to_name:
+        found.update(keycode_to_name.values())
+
+    nums = []
+
+    for code in found:
+        m = re.fullmatch(r"FK(\d{2})", code)
+        if m:
+            nums.append(int(m.group(1)))
+
+    max_detected = max(nums) if nums else 12
+
+    # En XKB pueden existir FK01-FK12 aunque el teclado físico no tenga todas.
+    # Mostramos F1-F12 como base normal y ampliamos si el mapa detecta más.
+    count = max(12, max_detected)
+
+    # Límite prudente: muchos mapas pueden definir teclas de función extendidas.
+    count = min(count, 24)
+
+    return [
+        (f"FK{i:02d}", f"F{i}", 1.0)
+        for i in range(1, count + 1)
+    ]
+
+
+def xkb_include_from_current():
+    # Debe coincidir con la fuente de entrada activa, no necesariamente con el
+    # último perfil UOK guardado.
+    gnome_source = current_gnome_input_source()
+
+    if gnome_source:
+        return gnome_source
+
+    result = run(["setxkbmap", "-query"])
+    layout = "es"
+    variant = ""
+
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            clean = line.strip()
+
+            if clean.startswith("layout:"):
+                layout = clean.split(":", 1)[1].strip().split(",")[0] or "es"
+            elif clean.startswith("variant:"):
+                variant = clean.split(":", 1)[1].strip().split(",")[0]
+
+    if layout:
+        return f"{layout}({variant})" if variant else layout
+
+    profile = current_uok_profile()
+
+    if profile:
+        return profile["id"]
+
+    return "es"
+
+def keysym_for_xkb(value):
+    return text_to_keysym(value)
+
+
+def symbol_to_text(sym):
+    return keysym_to_text(sym)
+
+
+def keycap_symbol(symbols, fallback):
+    if not symbols:
+        return fallback
+
+    normal = symbol_to_text(symbols[0]) if len(symbols) > 0 else ""
+    shift = symbol_to_text(symbols[1]) if len(symbols) > 1 else ""
+
+    if normal == "space":
+        return "Space"
+
+    if normal and shift and normal != shift:
+        return f"{normal}/{shift}"
+
+    if normal:
+        return normal
+
+    if shift:
+        return shift
+
+    text = symbol_to_text(fallback)
+    return text if text else fallback
+
+
+def normalized_symbols_for_values(values):
+    syms = []
+
+    for v in values:
+        syms.append(keysym_for_xkb(v) or "NoSymbol")
+
+    while len(syms) < 4:
+        syms.append("NoSymbol")
+
+    return syms[:4]
+
+
+class EditKeyDialog(Gtk.Dialog):
+    def __init__(self, parent, code, current_values):
+        super().__init__(title=f"Editar tecla <{code}>", transient_for=parent, flags=0)
+
+        self.set_modal(True)
+        self.add_button("Cancelar", Gtk.ResponseType.CANCEL)
+        self.add_button("Guardar", Gtk.ResponseType.OK)
+        self.set_default_size(560, 260)
+        self.entries = []
+
+        box = self.get_content_area()
+        box.set_spacing(8)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+
+        info = Gtk.Label(label="Valores actuales de la tecla. Cambia sólo lo que quieras modificar.")
+        info.set_xalign(0)
+        box.pack_start(info, False, False, 0)
+
+        grid = Gtk.Grid(column_spacing=8, row_spacing=8)
+        grid.set_valign(Gtk.Align.START)
+        box.pack_start(grid, False, False, 0)
+
+        for i, name in enumerate(LEVEL_NAMES):
+            lab = Gtk.Label(label=name)
+            lab.set_xalign(0)
+            grid.attach(lab, 0, i, 1, 1)
+
+            entry = Gtk.Entry()
+            entry.set_hexpand(True)
+            entry.set_text(current_values[i])
+            grid.attach(entry, 1, i, 1, 1)
+            self.entries.append(entry)
+
+            combo = Gtk.ComboBoxText()
+            for s in SPECIAL_KEYSYMS:
+                combo.append_text(s)
+
+            combo.set_active(0)
+            combo.connect("changed", self._special_selected, entry)
+            grid.attach(combo, 2, i, 1, 1)
+
+        self.show_all()
+
+    def _special_selected(self, combo, entry):
+        val = combo.get_active_text()
+        if val:
+            entry.set_text(val)
+
+    def values(self):
+        return [entry.get_text() for entry in self.entries]
+
+
+class CaptureKeyDialog(Gtk.Dialog):
+    def __init__(self, parent, keycode_to_name):
+        super().__init__(title="Añadir tecla física", transient_for=parent, flags=0)
+
+        self.keycode_to_name = keycode_to_name
+        self.detected = None
+
+        self.add_button("Cancelar", Gtk.ResponseType.CANCEL)
+        self.set_modal(True)
+        self.set_default_size(420, 140)
+
+        label = Gtk.Label(label="Pulsa la tecla física que quieres añadir al editor.")
+        label.set_margin_top(20)
+        label.set_margin_bottom(20)
+        label.set_margin_start(20)
+        label.set_margin_end(20)
+
+        self.get_content_area().pack_start(label, True, True, 0)
+
+        self.connect("key-press-event", self.on_key_press)
+        self.show_all()
+
+    def on_key_press(self, _widget, event):
+        code = self.keycode_to_name.get(event.hardware_keycode)
+
+        if code:
+            self.detected = code
+            self.response(Gtk.ResponseType.OK)
+
+        return True
+
+
+class UokLayoutEditor(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="UrOwnKeyboard - Editor visual")
+
+        self.set_default_size(1180, 620)
+        self.connect("destroy", Gtk.main_quit)
+
+        text = current_symbols_text()
+
+        self.base_symbols = parse_key_symbols(text)
+        self.keycode_to_name = parse_keycodes(text)
+        self.include_name = xkb_include_from_current()
+        self.changes = {}
+        self.buttons = {}
+        self.extra_keys = []
+        self.function_key_row = detected_function_key_row(
+            self.base_symbols,
+            self.keycode_to_name,
+        )
+
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.add(root)
+
+        self.source_items = load_xkb_sources(CURRENT_PROFILE, CONFIG / "profiles")
+
+        sidebar = self.build_sources_sidebar()
+        root.pack_start(sidebar, False, False, 0)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        root.pack_start(content, True, True, 0)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.set_margin_top(8)
+        header.set_margin_bottom(8)
+        header.set_margin_start(8)
+        header.set_margin_end(8)
+        content.pack_start(header, False, False, 0)
+
+        self.base_label = Gtk.Label(label=f"Base: {self.include_name}")
+        self.base_label.set_xalign(0)
+        header.pack_start(self.base_label, False, False, 0)
+
+        name_label = Gtk.Label(label="Nombre:")
+        header.pack_start(name_label, False, False, 0)
+
+        self.name_entry = Gtk.Entry()
+        self.name_entry.set_text("Mi teclado visual")
+        self.name_entry.set_hexpand(True)
+        header.pack_start(self.name_entry, True, True, 0)
+
+        add_btn = Gtk.Button(label="Añadir tecla física…")
+        add_btn.connect("clicked", self.on_add_physical_key)
+        header.pack_start(add_btn, False, False, 0)
+
+        export_btn = Gtk.Button(label="Exportar XKB…")
+        export_btn.connect("clicked", self.on_export_xkb)
+        header.pack_start(export_btn, False, False, 0)
+
+        save_btn = Gtk.Button(label="Importar en UOK…")
+        save_btn.connect("clicked", self.on_save)
+        header.pack_start(save_btn, False, False, 0)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_hexpand(True)
+        scrolled.set_vexpand(True)
+        content.pack_start(scrolled, True, True, 0)
+
+        self.keyboard_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.keyboard_outer.set_hexpand(True)
+        self.keyboard_outer.set_vexpand(True)
+        self.keyboard_outer.set_halign(Gtk.Align.CENTER)
+        self.keyboard_outer.set_valign(Gtk.Align.CENTER)
+
+        self.keyboard_frame = Gtk.Frame()
+        self.keyboard_frame.get_style_context().add_class("uok-keyboard-frame")
+        self.keyboard_frame.set_shadow_type(Gtk.ShadowType.NONE)
+        self.keyboard_frame.set_halign(Gtk.Align.CENTER)
+        self.keyboard_frame.set_valign(Gtk.Align.CENTER)
+        self.keyboard_frame.set_hexpand(False)
+        self.keyboard_frame.set_vexpand(False)
+
+        self.keyboard_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.keyboard_box.set_margin_top(14)
+        self.keyboard_box.set_margin_bottom(14)
+        self.keyboard_box.set_margin_start(14)
+        self.keyboard_box.set_margin_end(14)
+        self.keyboard_box.set_halign(Gtk.Align.START)
+        self.keyboard_box.set_valign(Gtk.Align.START)
+        self.keyboard_box.set_hexpand(False)
+        self.keyboard_box.set_vexpand(False)
+
+        self.keyboard_frame.add(self.keyboard_box)
+        self.keyboard_outer.pack_start(self.keyboard_frame, False, False, 0)
+
+        try:
+            scrolled.add_with_viewport(self.keyboard_outer)
+        except AttributeError:
+            scrolled.add(self.keyboard_outer)
+
+        self.draw_keyboard()
+        self.show_all()
+
+    def build_sources_sidebar(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.get_style_context().add_class("uok-sidebar")
+        outer.set_size_request(280, -1)
+        outer.set_hexpand(False)
+        outer.set_vexpand(True)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+
+        title = Gtk.Label(label="Fuentes de entrada")
+        title.get_style_context().add_class("uok-sidebar-title")
+        title.set_xalign(0)
+        outer.pack_start(title, False, False, 0)
+
+        self.sources_search = Gtk.SearchEntry()
+        self.sources_search.set_placeholder_text("Buscar…")
+        self.sources_search.connect("search-changed", self.on_sources_search_changed)
+        outer.pack_start(self.sources_search, False, False, 0)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_hexpand(True)
+        scrolled.set_vexpand(True)
+        outer.pack_start(scrolled, True, True, 0)
+
+        self.sources_list = Gtk.ListBox()
+        self.sources_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.sources_list.connect("row-selected", self.on_source_row_selected)
+        scrolled.add(self.sources_list)
+
+        self.rebuild_sources_list()
+
+        return outer
+
+    def source_matches_filter(self, item, query):
+        if not query:
+            return True
+
+        haystack = " ".join([
+            item.get("section", ""),
+            item.get("label", ""),
+            item.get("description", ""),
+            item.get("source_id", ""),
+            item.get("include", ""),
+        ]).lower()
+
+        return query.lower() in haystack
+
+    def make_section_row(self, title):
+        row = Gtk.ListBoxRow()
+        row.set_selectable(False)
+        row.set_activatable(False)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.set_margin_top(10)
+        box.set_margin_bottom(5)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+
+        sep = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        sep.get_style_context().add_class("uok-source-separator")
+        sep.set_size_request(-1, 2)
+        box.pack_start(sep, False, False, 0)
+
+        label_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        label_box.get_style_context().add_class("uok-source-section-box")
+        label_box.set_margin_top(2)
+
+        label = Gtk.Label(label=title)
+        label.get_style_context().add_class("uok-source-section")
+        label.set_xalign(0)
+        label.set_margin_top(4)
+        label.set_margin_bottom(4)
+        label.set_margin_start(8)
+        label.set_margin_end(8)
+
+        label_box.pack_start(label, True, True, 0)
+        box.pack_start(label_box, False, False, 0)
+
+        row.add(box)
+        return row
+
+    def make_source_row(self, item):
+        row = Gtk.ListBoxRow()
+        row.uok_source_item = item
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
+
+        label = Gtk.Label(label=item.get("label", ""))
+        label.set_xalign(0)
+        label.set_ellipsize(3)
+        box.pack_start(label, False, False, 0)
+
+        description = item.get("description", "") or item.get("include", "")
+        if description:
+            sub = Gtk.Label(label=description)
+            sub.get_style_context().add_class("uok-source-description")
+            sub.set_xalign(0)
+            sub.set_ellipsize(3)
+            box.pack_start(sub, False, False, 0)
+
+        row.add(box)
+        return row
+
+    def rebuild_sources_list(self):
+        for child in list(self.sources_list.get_children()):
+            self.sources_list.remove(child)
+
+        query = self.sources_search.get_text().strip() if hasattr(self, "sources_search") else ""
+        sections = ["UOK", "Added to system", "Others"]
+
+        for section in sections:
+            items = [
+                item
+                for item in self.source_items
+                if item.get("section") == section and self.source_matches_filter(item, query)
+            ]
+
+            if not items:
+                continue
+
+            self.sources_list.add(self.make_section_row(section))
+
+            for item in items:
+                self.sources_list.add(self.make_source_row(item))
+
+        self.sources_list.show_all()
+
+    def on_sources_search_changed(self, _entry):
+        self.rebuild_sources_list()
+
+    def on_source_row_selected(self, _listbox, row):
+        if row is None:
+            return
+
+        item = getattr(row, "uok_source_item", None)
+        if not item:
+            return
+
+        self.load_source_item(item)
+
+    def load_source_item(self, item):
+        text = ""
+
+        if item.get("kind") == "uok":
+            xkb_file = item.get("xkb_file", "")
+            if xkb_file:
+                path = Path(xkb_file).expanduser()
+                if path.exists():
+                    text = path.read_text(encoding="utf-8")
+
+        if not text:
+            text = xkb_dump_from_include(item.get("include", ""))
+
+        if not text:
+            self.message(
+                "No se pudo cargar la fuente",
+                item.get("label", item.get("include", "")),
+                Gtk.MessageType.ERROR,
+            )
+            return
+
+        parsed = parse_key_symbols(text)
+
+        if not parsed:
+            self.message(
+                "No se pudieron leer las teclas",
+                "La fuente se ha cargado, pero no se han encontrado símbolos XKB editables.",
+                Gtk.MessageType.ERROR,
+            )
+            return
+
+        self.base_symbols = parsed
+        self.include_name = item.get("include", "") or item.get("source_id", "")
+        self.changes.clear()
+        self.buttons.clear()
+
+        self.base_label.set_text(f"Base: {self.include_name}")
+        self.draw_keyboard()
+
+    def base_for_code(self, code):
+        base = list(self.base_symbols.get(code, []))[:4]
+
+        while len(base) < 4:
+            base.append("NoSymbol")
+
+        return base
+
+    def symbols_for_code(self, code):
+        base = self.base_for_code(code)
+        return self.changes.get(code, base)
+
+    def entry_values_for_code(self, code):
+        return [symbol_to_text(s) for s in self.symbols_for_code(code)]
+
+    def key_pixel_width(self, width):
+        return int(54 * width) + 12
+
+    def row_pixel_width(self, row):
+        if not row:
+            return 0
+
+        keys_width = sum(self.key_pixel_width(width) for _code, _fallback, width in row)
+        spacing_width = 6 * (len(row) - 1)
+
+        return keys_width + spacing_width
+
+    def max_main_keyboard_width(self):
+        if not LAYOUT_ROWS:
+            return 0
+
+        return max(self.row_pixel_width(row) for row in LAYOUT_ROWS)
+
+    def wrap_key_items(self, items, max_width):
+        rows = []
+        current = []
+        current_width = 0
+
+        for item in items:
+            item_width = self.key_pixel_width(item[2])
+
+            if current:
+                candidate_width = current_width + 6 + item_width
+            else:
+                candidate_width = item_width
+
+            if current and candidate_width > max_width:
+                rows.append(current)
+                current = [item]
+                current_width = item_width
+            else:
+                current.append(item)
+                current_width = candidate_width
+
+        if current:
+            rows.append(current)
+
+        return rows
+
+    def make_row_box(self):
+        h = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        h.set_halign(Gtk.Align.CENTER)
+        h.set_valign(Gtk.Align.START)
+        h.set_hexpand(False)
+        h.set_vexpand(False)
+        return h
+
+    def draw_keyboard(self):
+        for child in list(self.keyboard_box.get_children()):
+            self.keyboard_box.remove(child)
+
+        for row in LAYOUT_ROWS:
+            h = self.make_row_box()
+            self.keyboard_box.pack_start(h, False, False, 0)
+
+            for code, fallback, width in row:
+                self.add_key_button(h, code, fallback, width)
+
+        additional_items = []
+
+        if self.function_key_row:
+            additional_items.extend(self.function_key_row)
+
+        function_codes = {c for c, _, _ in self.function_key_row}
+
+        additional_items.extend(
+            (code, code, 1.2)
+            for code in self.extra_keys
+            if code not in function_codes
+        )
+
+        if additional_items:
+            sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+            self.keyboard_box.pack_start(sep, False, False, 4)
+
+            label = Gtk.Label(label="Teclas adicionales")
+            label.set_xalign(0)
+            label.get_style_context().add_class("uok-additional-title")
+            self.keyboard_box.pack_start(label, False, False, 0)
+
+            max_width = self.max_main_keyboard_width()
+
+            for row in self.wrap_key_items(additional_items, max_width):
+                h = self.make_row_box()
+                self.keyboard_box.pack_start(h, False, False, 0)
+
+                for code, fallback, width in row:
+                    self.add_key_button(h, code, fallback, width)
+
+        self.keyboard_box.show_all()
+
+    def add_key_button(self, row_box, code, fallback, width):
+        btn = Gtk.Button()
+        btn.get_style_context().add_class("uok-keycap")
+
+        btn.set_size_request(self.key_pixel_width(width), 54)
+        btn.set_vexpand(False)
+        btn.set_hexpand(False)
+
+        btn.set_label(self.button_label(code, fallback))
+        btn.set_tooltip_text(" / ".join(self.symbols_for_code(code)))
+        btn.connect("clicked", self.on_edit_key, code)
+
+        row_box.pack_start(btn, False, False, 0)
+        self.buttons[code] = (btn, fallback)
+
+    def button_label(self, code, fallback):
+        return keycap_symbol(self.symbols_for_code(code), fallback)
+
+    def refresh_button(self, code):
+        if code in self.buttons:
+            btn, fallback = self.buttons[code]
+            btn.set_label(self.button_label(code, fallback))
+            btn.set_tooltip_text(" / ".join(self.symbols_for_code(code)))
+
+    def on_edit_key(self, _button, code):
+        dialog = EditKeyDialog(self, code, self.entry_values_for_code(code))
+        response = dialog.run()
+
+        if response == Gtk.ResponseType.OK:
+            new_symbols = normalized_symbols_for_values(dialog.values())
+            base = self.base_for_code(code)
+
+            if new_symbols == base:
+                self.changes.pop(code, None)
+            else:
+                self.changes[code] = new_symbols
+
+            self.refresh_button(code)
+
+        dialog.destroy()
+
+    def on_add_physical_key(self, _button):
+        dialog = CaptureKeyDialog(self, self.keycode_to_name)
+        response = dialog.run()
+        code = dialog.detected
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK and code:
+            known = {c for row in LAYOUT_ROWS for c, _, _ in row}
+            known.update(c for c, _, _ in self.function_key_row)
+
+            if code not in known and code not in self.extra_keys:
+                self.extra_keys.append(code)
+                self.draw_keyboard()
+            elif code in self.buttons:
+                self.refresh_button(code)
+
+    def layout_name(self):
+        return self.name_entry.get_text().strip() or "Mi teclado visual"
+
+    def build_xkb(self, name):
+        lines = [
+            'default partial alphanumeric_keys modifier_keys',
+            'xkb_symbols "basic" {',
+            f'    include "{self.include_name}"',
+            f'    name[Group1] = "{name}";',
+            '',
+        ]
+
+        for code in sorted(self.changes):
+            symbols = self.symbols_for_code(code)
+            lines.append(f'    key <{code}> {{ [ {", ".join(symbols[:4])} ] }};')
+
+        lines.extend(['};', ''])
+
+        return "\n".join(lines)
+
+    def message(self, title, text, kind=Gtk.MessageType.INFO):
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=kind,
+            buttons=Gtk.ButtonsType.OK,
+            text=title,
+        )
+        dialog.format_secondary_text(text)
+        dialog.run()
+        dialog.destroy()
+
+    def warn_if_no_changes(self):
+        if self.changes:
+            return True
+
+        self.message("No hay cambios", "Edita alguna tecla antes de guardar o exportar.")
+        return False
+
+    def on_export_xkb(self, _button):
+        if not self.warn_if_no_changes():
+            return
+
+        name = self.layout_name()
+        content = self.build_xkb(name)
+
+        chooser = Gtk.FileChooserDialog(
+            title="Exportar archivo XKB",
+            transient_for=self,
+            action=Gtk.FileChooserAction.SAVE,
+        )
+
+        chooser.add_buttons("Cancelar", Gtk.ResponseType.CANCEL, "Exportar", Gtk.ResponseType.OK)
+        chooser.set_do_overwrite_confirmation(True)
+
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "uok-layout"
+        chooser.set_current_name(safe + ".xkb")
+
+        response = chooser.run()
+        filename = chooser.get_filename()
+        chooser.destroy()
+
+        if response == Gtk.ResponseType.OK and filename:
+            Path(filename).write_text(content, encoding="utf-8")
+            self.message("XKB exportado", filename)
+
+    def on_save(self, _button):
+        if not self.warn_if_no_changes():
+            return
+
+        name = self.layout_name()
+        content = self.build_xkb(name)
+
+        temp_dir = Path(tempfile.mkdtemp(prefix="uok-visual-"))
+        xkb_file = temp_dir / "symbols"
+        xkb_file.write_text(content, encoding="utf-8")
+
+        result = subprocess.run(
+            ["uok", "import", "--name", name, "--xkb", str(xkb_file)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        if result.returncode != 0:
+            self.message("No se pudo importar", result.stderr or result.stdout, Gtk.MessageType.ERROR)
+            return
+
+        self.message("Layout importado", result.stdout.strip() or "Configuración importada correctamente.")
+
+
+def main():
+    css = b"""
+    .uok-sidebar {
+        background-color: @theme_base_color;
+        border: 1px solid @borders;
+        border-radius: 12px;
+        padding: 8px;
+    }
+
+    .uok-sidebar-title {
+        font-weight: bold;
+        font-size: 115%;
+    }
+
+    .uok-source-section-box {
+        background-color: alpha(@theme_fg_color, 0.06);
+        border-radius: 6px;
+    }
+
+    .uok-source-section {
+        font-weight: bold;
+        opacity: 0.9;
+    }
+
+    .uok-source-separator {
+        background-color: alpha(@theme_fg_color, 0.28);
+        border-radius: 999px;
+    }
+
+    .uok-source-description {
+        font-size: 85%;
+        opacity: 0.65;
+    }
+
+    .uok-keyboard-frame {
+        background-color: @theme_base_color;
+        border: 1px solid @borders;
+        border-radius: 12px;
+        padding: 0px;
+    }
+
+    .uok-additional-title {
+        margin-top: 4px;
+        margin-bottom: 2px;
+        font-weight: bold;
+    }
+
+    .uok-keycap {
+        padding-top: 2px;
+        padding-bottom: 2px;
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+    """
+
+    provider = Gtk.CssProvider()
+    provider.load_from_data(css)
+
+    screen = Gdk.Screen.get_default()
+    if screen is not None:
+        Gtk.StyleContext.add_provider_for_screen(
+            screen,
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+    UokLayoutEditor()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

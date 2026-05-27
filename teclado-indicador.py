@@ -170,6 +170,12 @@ def activar_profile(profile):
     reiniciar_indicador()
 
 
+def crear_layout_visual(_):
+    editor = HOME / ".local" / "bin" / "uok-layout-editor.py"
+    if not editor.exists():
+        editor = Path(__file__).resolve().parent / "uok-layout-editor.py"
+    run(f'{shlex.quote(str(editor))} || notify-send "Keyboard" "Could not open layout editor"')
+
 def importar_configuracion(_):
     name = sh(
         'zenity --entry '
@@ -473,6 +479,58 @@ def mostrar_configuracion_completa(_):
         notify("Keyboard", "Could not show the full configuration")
 
 
+
+def abrir_editor_visual(_item=None):
+    import sys
+
+    candidates = [
+        Path(__file__).resolve().parent / "uok-layout-editor.py",
+        HOME / ".local" / "bin" / "uok-layout-editor.py",
+        Path.cwd() / "uok-layout-editor.py",
+    ]
+
+    editor = next((path for path in candidates if path.exists()), None)
+
+    if editor is None:
+        notify("UrOwnKeyboard", "No se encontró el editor visual.")
+        return
+
+    subprocess.Popen(
+        [sys.executable, str(editor)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+
+def abrir_ajustes_teclado(_item=None):
+    commands = [
+        ["gnome-control-center", "keyboard"],
+        ["cinnamon-settings", "keyboard"],
+        ["xfce4-keyboard-settings"],
+        ["systemsettings", "kcm_keyboard"],
+    ]
+
+    for cmd in commands:
+        try:
+            subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+
+    notify("UrOwnKeyboard", "No se pudo abrir la configuración de teclado del sistema.")
+
+
 def crear_menu():
     menu = Gtk.Menu()
 
@@ -508,13 +566,35 @@ def crear_menu():
     item_complete.connect("activate", mostrar_configuracion_completa)
     menu.append(item_complete)
 
-    item_import = Gtk.MenuItem(label="Import configuration…")
-    item_import.connect("activate", importar_configuracion)
-    menu.append(item_import)
+
 
     item_delete = Gtk.MenuItem(label="Delete configuration…")
     item_delete.connect("activate", eliminar_configuracion)
     menu.append(item_delete)
+
+    item_new_config = Gtk.MenuItem(label="New configuration…")
+    submenu_new_config = Gtk.Menu()
+
+    item_editor = Gtk.MenuItem(label="Open visual editor…")
+    item_editor.connect("activate", abrir_editor_visual)
+    submenu_new_config.append(item_editor)
+
+    item_import = Gtk.MenuItem(label="Import configuration…")
+    item_import.connect("activate", importar_configuracion)
+    submenu_new_config.append(item_import)
+
+    item_settings = Gtk.MenuItem(label="Add from settings…")
+    item_settings.connect("activate", abrir_ajustes_teclado)
+    submenu_new_config.append(item_settings)
+
+    item_new_config.set_submenu(submenu_new_config)
+    menu.append(item_new_config)
+
+    uok_reload_separator = Gtk.SeparatorMenuItem()
+
+
+    menu.append(uok_reload_separator)
+
 
     item_refresh = Gtk.MenuItem(label="Reload list")
     item_refresh.connect("activate", lambda _: reiniciar_indicador())
