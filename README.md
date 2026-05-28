@@ -357,43 +357,11 @@ En Wayland:
 
 Para el estado actual del proyecto, se recomienda usar una sesión **X11**.
 
-
-## Estructura del proyecto
-
-```text
-UrOwnKeyboard/
-├── teclado-indicador.py
-├── uok
-├── uok-layout-editor.py
-├── uok_xkb_sources.py
-├── uok_xkb_symbols.py
-├── install.sh
-├── uninstall.sh
-├── helpers/
-│   └── keyd-aplicar-conf
-├── gnome-extension/
-│   ├── metadata.json
-│   └── extension.js
-└── README.md
-```
-
 ## Desinstalación
 
 ```bash
 cd "$HOME/UrOwnKeyboard"
 ./uninstall.sh
-```
-
-Esto elimina:
-
-```text
-- el indicador instalado;
-- el comando uok instalado;
-- el editor visual instalado;
-- la entrada de autoinicio;
-- la extensión local de GNOME;
-- el helper de keyd;
-- la regla sudoers.
 ```
 
 No borra tus configuraciones importadas en:
