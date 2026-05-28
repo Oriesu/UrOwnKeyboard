@@ -3574,8 +3574,226 @@ def verify_gnome_source_applied(source_type, source_id):
 
     return True, ""
 
+
+# --------------------------------------------------------------------
+# UOK Cinnamon-only compatibility override
+# --------------------------------------------------------------------
+# Este bloque NO modifica GNOME ni XFCE.
+# En escritorios que no sean Cinnamon delega en las funciones anteriores.
+
+try:
+    __uok_base_get_sources = get_sources
+except Exception:
+    def __uok_base_get_sources():
+        return []
+
+try:
+    __uok_base_abrir_ajustes_teclado = abrir_ajustes_teclado
+except Exception:
+    def __uok_base_abrir_ajustes_teclado(_item=None):
+        return
+
+try:
+    __uok_base_ocultar_menu_xfce = ocultar_menu_xfce
+except Exception:
+    def __uok_base_ocultar_menu_xfce():
+        return
+
+
+def uok_desktop_name():
+    return " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+
+
+def uok_is_cinnamon():
+    return "cinnamon" in uok_desktop_name()
+
+
+def uok_read_gsettings_array(schema, key):
+    try:
+        raw = subprocess.check_output(
+            ["gsettings", "get", schema, key],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return []
+
+    try:
+        import ast
+        value = ast.literal_eval(raw)
+    except Exception:
+        return []
+
+    if isinstance(value, (list, tuple)):
+        return [str(x) for x in value]
+
+    return []
+
+
+def uok_ibus_engine_to_source(engine):
+    engine = str(engine or "").strip().strip("'\"")
+
+    if not engine.startswith("xkb:"):
+        return None
+
+    parts = engine.split(":")
+
+    if len(parts) < 2:
+        return None
+
+    layout = parts[1].strip()
+    variant = parts[2].strip() if len(parts) >= 3 else ""
+
+    if not layout:
+        return None
+
+    if variant:
+        return ("xkb", f"{layout}+{variant}")
+
+    return ("xkb", layout)
+
+
+def uok_cinnamon_ibus_sources():
+    engines = []
+
+    for key in ("engines-order", "preload-engines"):
+        for engine in uok_read_gsettings_array("org.freedesktop.ibus.general", key):
+            if engine not in engines:
+                engines.append(engine)
+
+    sources = []
+
+    for engine in engines:
+        source = uok_ibus_engine_to_source(engine)
+
+        if source and source not in sources:
+            sources.append(source)
+
+    return sources
+
+
+def get_sources():
+    if not uok_is_cinnamon():
+        return __uok_base_get_sources()
+
+    sources = uok_cinnamon_ibus_sources()
+
+    try:
+        current = get_raw_setxkbmap_spec()
+    except Exception:
+        current = ""
+
+    if current:
+        current_source = ("xkb", current.replace("(", "+").replace(")", ""))
+
+        if current_source not in sources:
+            sources.insert(0, current_source)
+
+    return sources
+
+
+def abrir_ajustes_teclado(_item=None):
+    if not uok_is_cinnamon():
+        return __uok_base_abrir_ajustes_teclado(_item)
+
+    for cmd in (
+        ["cinnamon-settings", "keyboard"],
+        ["cinnamon-settings", "region"],
+    ):
+        try:
+            subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=menu_env(),
+                start_new_session=True,
+            )
+            return
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+
+    notify("UrOwnKeyboard", "No se pudo abrir la configuración de teclado de Cinnamon.")
+
+
+def ocultar_menu_xfce():
+    if uok_is_cinnamon():
+        # No tocar XFCE ni GNOME desde Cinnamon.
+        # Tampoco eliminamos applets de Cinnamon automáticamente.
+        return
+
+    return __uok_base_ocultar_menu_xfce()
+
 ocultar_menu_xfce()
 sincronizar_estado_al_arrancar()
-indicator.set_menu(crear_menu())
+uok_main_menu = crear_menu()
+indicator.set_menu(uok_main_menu)
+
+# --------------------------------------------------------------------
+# UOK Cinnamon Gtk.StatusIcon fallback
+# --------------------------------------------------------------------
+# Cinnamon a veces no muestra el AppIndicator/Ayatana aunque el proceso esté vivo.
+# Este fallback sólo se activa en Cinnamon y no modifica GNOME ni XFCE.
+
+def uok_enable_cinnamon_status_icon(menu):
+    try:
+        if not uok_is_cinnamon():
+            return None
+    except Exception:
+        return None
+
+    try:
+        status_icon = Gtk.StatusIcon.new_from_icon_name("input-keyboard")
+        status_icon.set_title("UrOwnKeyboard")
+        status_icon.set_tooltip_text("UrOwnKeyboard")
+        status_icon.set_visible(True)
+
+        def popup(_icon, button, activate_time):
+            menu.popup(
+                None,
+                None,
+                Gtk.StatusIcon.position_menu,
+                status_icon,
+                button,
+                activate_time,
+            )
+
+        def activate(_icon):
+            menu.popup(
+                None,
+                None,
+                Gtk.StatusIcon.position_menu,
+                status_icon,
+                0,
+                Gtk.get_current_event_time(),
+            )
+
+        status_icon.connect("popup-menu", popup)
+        status_icon.connect("activate", activate)
+
+        return status_icon
+    except Exception as exc:
+        try:
+            notify("UrOwnKeyboard", f"No se pudo activar fallback Cinnamon: {exc}")
+        except Exception:
+            pass
+        return None
+
+
+uok_cinnamon_status_icon = uok_enable_cinnamon_status_icon(uok_main_menu)
+
+# En Cinnamon, si el fallback Gtk.StatusIcon existe, ocultamos el AppIndicator
+# para que no aparezcan dos menús UOK. En GNOME/XFCE no cambia nada.
+try:
+    if uok_cinnamon_status_icon is not None and uok_is_cinnamon():
+        indicator.set_status(AppIndicator3.IndicatorStatus.PASSIVE)
+except Exception:
+    pass
 
 Gtk.main()
