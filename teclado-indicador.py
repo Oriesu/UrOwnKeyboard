@@ -3730,6 +3730,599 @@ def ocultar_menu_xfce():
 
     return __uok_base_ocultar_menu_xfce()
 
+
+
+
+# --------------------------------------------------------------------
+# UOK KDE Plasma-only compatibility override
+# --------------------------------------------------------------------
+# Este bloque sólo actúa en KDE/Plasma.
+# GNOME, XFCE y Cinnamon delegan en las funciones anteriores.
+
+try:
+    __uok_kde_base_get_sources = get_sources
+except Exception:
+    def __uok_kde_base_get_sources():
+        return []
+
+try:
+    __uok_kde_base_aplicar_gnome_source_sync = aplicar_gnome_source_sync
+except Exception:
+    def __uok_kde_base_aplicar_gnome_source_sync(index):
+        return True
+
+try:
+    __uok_kde_base_get_gnome_current_source = get_gnome_current_source
+except Exception:
+    def __uok_kde_base_get_gnome_current_source():
+        return None
+
+try:
+    __uok_kde_base_aplicar_keyd_off_sync = aplicar_keyd_off_sync
+except Exception:
+    def __uok_kde_base_aplicar_keyd_off_sync():
+        return True
+
+
+def uok_kde_desktop_name():
+    return " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+
+
+def uok_is_kde():
+    desktop = uok_kde_desktop_name()
+    return "kde" in desktop or "plasma" in desktop
+
+
+def uok_kde_source_id_from_layout_variant(layout, variant=""):
+    layout = (layout or "").strip()
+    variant = (variant or "").strip()
+
+    if not layout:
+        return ""
+
+    return f"{layout}+{variant}" if variant else layout
+
+
+def uok_kde_unique_sources(sources):
+    out = []
+    seen = set()
+
+    for item in sources:
+        if not item or len(item) != 2:
+            continue
+
+        source_type, source_id = item
+        source_type = str(source_type or "").strip()
+        source_id = str(source_id or "").strip()
+
+        if source_type != "xkb" or not source_id:
+            continue
+
+        key = (source_type, source_id)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        out.append(key)
+
+    return out
+
+
+def uok_kde_sources_from_setxkbmap():
+    result = run_menu_cmd(["setxkbmap", "-query"])
+
+    if result.returncode != 0:
+        return []
+
+    layouts = []
+    variants = []
+
+    for line in result.stdout.splitlines():
+        clean = line.strip()
+
+        if clean.startswith("layout:"):
+            layouts = [x.strip() for x in clean.split(":", 1)[1].split(",") if x.strip()]
+        elif clean.startswith("variant:"):
+            variants = [x.strip() for x in clean.split(":", 1)[1].split(",")]
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    sources = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_kde_source_id_from_layout_variant(layout, variant)
+
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_kde_unique_sources(sources)
+
+
+def uok_kde_sources_from_kxkbrc():
+    paths = [
+        HOME / ".config" / "kxkbrc",
+        HOME / ".kde" / "share" / "config" / "kxkbrc",
+    ]
+
+    text = ""
+
+    for path in paths:
+        try:
+            if path.exists():
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                break
+        except Exception:
+            pass
+
+    if not text:
+        return []
+
+    layouts = []
+    variants = []
+
+    for line in text.splitlines():
+        clean = line.strip()
+
+        if not clean or clean.startswith("#") or "=" not in clean:
+            continue
+
+        key, value = clean.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+
+        if key in {"layoutlist", "layouts"}:
+            layouts = [x.strip() for x in value.split(",") if x.strip()]
+        elif key in {"variantlist", "variants"}:
+            variants = [x.strip() for x in value.split(",")]
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    sources = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_kde_source_id_from_layout_variant(layout, variant)
+
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_kde_unique_sources(sources)
+
+
+def get_sources():
+    if not uok_is_kde():
+        return __uok_kde_base_get_sources()
+
+    sources = []
+
+    # KDE suele guardar la lista completa en ~/.config/kxkbrc.
+    sources.extend(uok_kde_sources_from_kxkbrc())
+
+    # setxkbmap refleja lo que está activo realmente.
+    sources.extend(uok_kde_sources_from_setxkbmap())
+
+    return uok_kde_unique_sources(sources)
+
+
+def aplicar_gnome_source_sync(index):
+    if uok_is_kde():
+        # En KDE no usamos org.gnome.desktop.input-sources.
+        # El cambio real lo hace aplicar_xkb_source_sync() con setxkbmap.
+        return True
+
+    return __uok_kde_base_aplicar_gnome_source_sync(index)
+
+
+def get_gnome_current_source():
+    if not uok_is_kde():
+        return __uok_kde_base_get_gnome_current_source()
+
+    sources = get_sources()
+
+    if not sources:
+        return None
+
+    source_type, source_id = sources[0]
+
+    return {
+        "index": 0,
+        "source_type": source_type,
+        "source_id": source_id,
+        "name": source_label(source_type, source_id),
+    }
+
+
+def aplicar_keyd_off_sync():
+    if not uok_is_kde():
+        return __uok_kde_base_aplicar_keyd_off_sync()
+
+    result = run_menu_cmd(["sudo", "-n", str(KEYD_HELPER), "--off"])
+
+    if result.returncode == 0:
+        return True
+
+    # En KDE no bloqueamos ni mostramos aviso si sudo no puede apagar keyd.
+    # XKB debe poder volver a un teclado normal igualmente.
+    # El instalador crea sudoers NOPASSWD para el helper; si no existe, se corrige aparte.
+    return True
+
+
+# --------------------------------------------------------------------
+# UOK KDE activation override
+# --------------------------------------------------------------------
+# Sólo cambia la activación de fuentes normales en KDE.
+# GNOME/XFCE/Cinnamon delegan en la función anterior.
+
+try:
+    __uok_kde_base_activar_gnome_source = activar_gnome_source
+except Exception:
+    def __uok_kde_base_activar_gnome_source(index, source_type, source_id):
+        return
+
+
+def activar_gnome_source(index, source_type, source_id):
+    if not uok_is_kde():
+        return __uok_kde_base_activar_gnome_source(index, source_type, source_id)
+
+    label = source_label(source_type, source_id)
+
+    # En KDE: keyd es opcional. Si no se puede apagar, no bloqueamos XKB.
+    try:
+        aplicar_keyd_off_sync()
+    except Exception:
+        pass
+
+    if not aplicar_xkb_source_sync(source_type, source_id):
+        return
+
+    ok, msg = verify_gnome_source_applied(source_type, source_id)
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", msg)
+        return
+
+    current = {
+        "type": "gnome-source",
+        "name": label,
+        "source_type": source_type,
+        "source_id": source_id,
+        "desktop": "kde",
+        "keyd_conf": None,
+    }
+
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
+    )
+
+    notify("Keyboard", label + " activated")
+
+
+# --------------------------------------------------------------------
+# UOK KDE IBus source merge override
+# --------------------------------------------------------------------
+# Sólo KDE/Plasma:
+# - KDE aporta fuentes desde ~/.config/kxkbrc y setxkbmap.
+# - IBus puede aportar otras fuentes visibles en el menú nativo, por ejemplo de.
+# GNOME/XFCE/Cinnamon no se modifican.
+
+try:
+    __uok_kde_ibus_base_get_sources = get_sources
+except Exception:
+    def __uok_kde_ibus_base_get_sources():
+        return []
+
+
+def uok_kde_ibus_read_gsettings_array(schema, key):
+    try:
+        raw = subprocess.check_output(
+            ["gsettings", "get", schema, key],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return []
+
+    try:
+        value = ast.literal_eval(raw)
+    except Exception:
+        return []
+
+    if isinstance(value, (list, tuple)):
+        return [str(x) for x in value]
+
+    return []
+
+
+def uok_kde_ibus_engine_to_source(engine):
+    engine = str(engine or "").strip().strip("'\"")
+
+    if not engine.startswith("xkb:"):
+        return None
+
+    parts = engine.split(":")
+
+    if len(parts) < 2:
+        return None
+
+    layout = parts[1].strip()
+    variant = parts[2].strip() if len(parts) >= 3 else ""
+
+    if not layout:
+        return None
+
+    if variant:
+        return ("xkb", f"{layout}+{variant}")
+
+    return ("xkb", layout)
+
+
+def uok_kde_ibus_sources():
+    engines = []
+
+    for key in ("engines-order", "preload-engines"):
+        for engine in uok_kde_ibus_read_gsettings_array("org.freedesktop.ibus.general", key):
+            if engine not in engines:
+                engines.append(engine)
+
+    sources = []
+
+    for engine in engines:
+        source = uok_kde_ibus_engine_to_source(engine)
+
+        if source and source not in sources:
+            sources.append(source)
+
+    return sources
+
+
+def get_sources():
+    if not uok_is_kde():
+        return __uok_kde_ibus_base_get_sources()
+
+    sources = []
+
+    # Lo que ya detectaba KDE: kxkbrc + setxkbmap.
+    sources.extend(__uok_kde_ibus_base_get_sources())
+
+    # Lo que aparece en el menú nativo de IBus.
+    sources.extend(uok_kde_ibus_sources())
+
+    try:
+        return uok_kde_unique_sources(sources)
+    except Exception:
+        out = []
+        seen = set()
+
+        for item in sources:
+            if not item or len(item) != 2:
+                continue
+
+            key = tuple(item)
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            out.append(key)
+
+        return out
+
+
+# --------------------------------------------------------------------
+# UOK KDE Plasma native keyboard menu hider
+# --------------------------------------------------------------------
+# Sólo KDE/Plasma. No toca layouts, idiomas ni kxkbrc.
+# Oculta/elimina del panel los iconos nativos de teclado/input method
+# para que quede visible sólo el menú de UrOwnKeyboard.
+
+def uok_hide_kde_native_keyboard_menus():
+    try:
+        desktop = " ".join([
+            os.environ.get("XDG_CURRENT_DESKTOP", ""),
+            os.environ.get("DESKTOP_SESSION", ""),
+            os.environ.get("XDG_SESSION_DESKTOP", ""),
+        ]).lower()
+
+        if "kde" not in desktop and "plasma" not in desktop:
+            return
+
+        conf = HOME / ".config" / "plasma-org.kde.plasma.desktop-appletsrc"
+
+        if not conf.exists():
+            return
+
+        plugins = {
+            "org.kde.plasma.keyboardlayout",
+            "org.kde.plasma.manage-inputmethod",
+        }
+
+        text = conf.read_text(encoding="utf-8", errors="ignore")
+        lines = text.splitlines()
+
+        import re as _re
+
+        groups = []
+        current = None
+
+        for i, line in enumerate(lines):
+            m = _re.match(r"^\[(.+)\]\s*$", line)
+            if m:
+                current = {
+                    "name": m.group(1),
+                    "start": i,
+                    "end": len(lines),
+                    "body": [],
+                }
+                groups.append(current)
+            elif current is not None:
+                current["body"].append(line)
+
+        for i in range(len(groups) - 1):
+            groups[i]["end"] = groups[i + 1]["start"]
+
+        target_ids = set()
+
+        for group in groups:
+            body = "\n".join(group["body"])
+
+            if any(f"plugin={plugin}" in body for plugin in plugins):
+                m = _re.search(r"Applets\]\[(\d+)", group["name"])
+                if m:
+                    target_ids.add(m.group(1))
+
+        def split_csv(value):
+            return [x.strip() for x in value.split(",") if x.strip()]
+
+        def join_csv(items):
+            out = []
+            seen = set()
+
+            for item in items:
+                if item and item not in seen:
+                    seen.add(item)
+                    out.append(item)
+
+            return ",".join(out)
+
+        remove_line = [False] * len(lines)
+
+        for group in groups:
+            name = group["name"]
+
+            remove_group = False
+
+            for applet_id in target_ids:
+                # Ojo: el último corchete no está dentro de group["name"].
+                if _re.search(rf"Applets\]\[{_re.escape(applet_id)}(?:\]|$|\[)", name):
+                    remove_group = True
+
+            if "\\x5bConfiguration" in name:
+                remove_group = True
+
+            if remove_group:
+                for i in range(group["start"], group["end"]):
+                    remove_line[i] = True
+
+        new = []
+        in_general = False
+        hidden_seen = False
+
+        for i, line in enumerate(lines):
+            if remove_line[i]:
+                continue
+
+            m = _re.match(r"^\[(.+)\]\s*$", line)
+
+            if m:
+                if in_general and not hidden_seen:
+                    new.append("hiddenItems=" + join_csv(sorted(plugins)))
+
+                group = m.group(1)
+                in_general = group.endswith("[General]")
+                hidden_seen = False
+                new.append(line)
+                continue
+
+            if "=" in line:
+                key, value = line.split("=", 1)
+
+                if key == "AppletOrder" and target_ids:
+                    parts = [x.strip() for x in value.split(";") if x.strip()]
+                    parts = [x for x in parts if x not in target_ids]
+                    line = key + "=" + ";".join(parts)
+
+                elif key in {"extraItems", "knownItems", "shownItems"}:
+                    parts = [x for x in split_csv(value) if x not in plugins]
+                    line = key + "=" + join_csv(parts)
+
+                elif key == "hiddenItems":
+                    parts = split_csv(value)
+                    for plugin in sorted(plugins):
+                        if plugin not in parts:
+                            parts.append(plugin)
+                    line = key + "=" + join_csv(parts)
+                    hidden_seen = True
+
+            new.append(line)
+
+        if in_general and not hidden_seen:
+            new.append("hiddenItems=" + join_csv(sorted(plugins)))
+
+        fixed = "\n".join(new) + "\n"
+
+        if fixed != text:
+            conf.write_text(fixed, encoding="utf-8")
+
+        try:
+            subprocess.run(
+                ["gsettings", "set", "org.freedesktop.ibus.panel", "show-icon-on-systray", "false"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=menu_env(),
+                check=False,
+            )
+        except Exception:
+            pass
+
+    except Exception:
+        return
+
+uok_hide_kde_native_keyboard_menus()
+
+# --------------------------------------------------------------------
+# UOK KDE Plasma IBus native menu hider
+# --------------------------------------------------------------------
+# Sólo KDE/Plasma.
+# Cierra el panel/menú visual de IBus para que no aparezca el menú nativo
+# Español/Alemán, pero NO borra las fuentes IBus. UOK las sigue leyendo
+# desde gsettings.
+
+def uok_hide_kde_ibus_native_menu():
+    try:
+        desktop = " ".join([
+            os.environ.get("XDG_CURRENT_DESKTOP", ""),
+            os.environ.get("DESKTOP_SESSION", ""),
+            os.environ.get("XDG_SESSION_DESKTOP", ""),
+        ]).lower()
+
+        if "kde" not in desktop and "plasma" not in desktop:
+            return
+
+        # Evita que IBus muestre icono propio en la bandeja.
+        subprocess.run(
+            ["gsettings", "set", "org.freedesktop.ibus.panel", "show-icon-on-systray", "false"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=menu_env(),
+            check=False,
+        )
+
+        # Cierra sólo la interfaz/panel de IBus. No borra engines-order ni preload-engines.
+        for cmd in (
+            ["ibus", "exit"],
+            ["pkill", "-f", "ibus-ui"],
+            ["pkill", "-f", "ibus-panel"],
+        ):
+            try:
+                subprocess.run(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=menu_env(),
+                    check=False,
+                )
+            except Exception:
+                pass
+
+    except Exception:
+        return
+
+uok_hide_kde_ibus_native_menu()
 ocultar_menu_xfce()
 sincronizar_estado_al_arrancar()
 uok_main_menu = crear_menu()
