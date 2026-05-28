@@ -11,9 +11,6 @@ Incluye:
 - un editor visual de distribuciones XKB;
 - soporte para perfiles XKB propios;
 - soporte opcional para `keyd`;
-- integración con GNOME;
-- soporte para XFCE;
-- una extensión específica de GNOME para ocultar el indicador nativo de fuentes de entrada.
 
 ---
 
