@@ -28,18 +28,6 @@ UrOwnKeyboard está orientado principalmente a escritorios Linux que usen **XKB 
 | Wayland | En desarrollo | no garantizado todavía |
 | Otros | Experimental | puede funcionar si soportan XKB y AppIndicator/Ayatana |
 
-### Notas por escritorio
-
-En **GNOME**, UrOwnKeyboard usa las fuentes de entrada de `gsettings` y puede ocultar el indicador nativo mediante la extensión GNOME incluida.
-
-En **KDE Plasma**, UrOwnKeyboard lee distribuciones desde `~/.config/kxkbrc`, `setxkbmap -query` e IBus. También puede ocultar los menús nativos de Plasma relacionados con teclado e input method para dejar visible sólo el menú de UrOwnKeyboard.
-
-En **XFCE**, UrOwnKeyboard puede leer distribuciones añadidas desde la configuración de teclado de XFCE, `setxkbmap` e IBus cuando está presente.
-
-En **Cinnamon**, UrOwnKeyboard lee fuentes desde IBus y `setxkbmap`. También incluye un fallback para que el indicador sea visible en la bandeja de Cinnamon cuando AppIndicator no se muestra correctamente.
-
-En **Wayland**, el soporte todavía está en desarrollo. `keyd` puede seguir siendo útil porque trabaja a nivel de dispositivo, pero el cambio de distribución mediante `setxkbmap` no es fiable en Wayland. El soporte Wayland necesitará integración específica por escritorio o compositor.
-
 ## Instalación rápida
 
 Copia y pega esto en una terminal:
