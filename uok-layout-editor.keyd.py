@@ -853,11 +853,10 @@ class CaptureKeyDialog(Gtk.Dialog):
 
 
 class KeydShortcutDialog(Gtk.Dialog):
-    def __init__(self, parent, key_options, rule=None, block_all_shortcuts=False):
+    def __init__(self, parent, key_options, rule=None):
         super().__init__(title="Editar atajo keyd", transient_for=parent, flags=0)
 
         self.key_options = key_options
-        self.block_all_shortcuts = block_all_shortcuts
         self.mod_checks = []
         self.target_mod_checks = []
 
@@ -869,7 +868,7 @@ class KeydShortcutDialog(Gtk.Dialog):
         rule = rule or {
             "source_mods": [],
             "source_key": key_options[0][1] if key_options else "a",
-            "action": "replace" if block_all_shortcuts else "block",
+            "action": "block",
             "target_mods": [],
             "target_key": key_options[0][1] if key_options else "a",
         }
@@ -881,18 +880,7 @@ class KeydShortcutDialog(Gtk.Dialog):
         box.set_margin_start(12)
         box.set_margin_end(12)
 
-        if block_all_shortcuts:
-            info_text = (
-                "Bloqueo global activo: todos los atajos con modificadores quedan bloqueados. "
-                "Aquí sólo añades excepciones o reemplazos concretos."
-            )
-        else:
-            info_text = (
-                "Define un atajo físico de keyd. Los modificadores van por separado y "
-                "la tecla principal se elige de la distribución visible."
-            )
-
-        info = Gtk.Label(label=info_text)
+        info = Gtk.Label(label="Define un atajo físico de keyd. Los modificadores van por separado y la tecla principal se elige de la distribución visible.")
         info.set_xalign(0)
         info.set_line_wrap(True)
         box.pack_start(info, False, False, 0)
@@ -926,32 +914,18 @@ class KeydShortcutDialog(Gtk.Dialog):
         action_title.set_xalign(0)
         grid.attach(action_title, 0, 3, 2, 1)
 
-        if block_all_shortcuts:
-            self.block_radio = None
-            self.replace_radio = Gtk.RadioButton.new_with_label_from_widget(
-                None,
-                "Añadir atajo permitido / reemplazo"
-            )
-            self.replace_radio.set_active(True)
-            grid.attach(self.replace_radio, 0, 4, 2, 1)
-            target_row_offset = 5
-        else:
-            self.block_radio = Gtk.RadioButton.new_with_label_from_widget(None, "Bloquear atajo")
-            self.replace_radio = Gtk.RadioButton.new_with_label_from_widget(
-                self.block_radio,
-                "Reemplazar por otro atajo"
-            )
-            grid.attach(self.block_radio, 0, 4, 2, 1)
-            grid.attach(self.replace_radio, 0, 5, 2, 1)
+        self.block_radio = Gtk.RadioButton.new_with_label_from_widget(None, "Bloquear atajo")
+        self.replace_radio = Gtk.RadioButton.new_with_label_from_widget(self.block_radio, "Reemplazar por otro atajo")
+        grid.attach(self.block_radio, 0, 4, 2, 1)
+        grid.attach(self.replace_radio, 0, 5, 2, 1)
 
-            self.block_radio.set_active(rule.get("action") != "replace")
-            self.replace_radio.set_active(rule.get("action") == "replace")
-            self.block_radio.connect("toggled", self.on_action_toggled)
-            target_row_offset = 6
+        self.block_radio.set_active(rule.get("action") != "replace")
+        self.replace_radio.set_active(rule.get("action") == "replace")
+        self.block_radio.connect("toggled", self.on_action_toggled)
 
-        grid.attach(Gtk.Label(label="Modificadores destino", xalign=0), 0, target_row_offset, 1, 1)
+        grid.attach(Gtk.Label(label="Modificadores destino", xalign=0), 0, 6, 1, 1)
         self.target_mod_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        grid.attach(self.target_mod_box, 1, target_row_offset, 1, 1)
+        grid.attach(self.target_mod_box, 1, 6, 1, 1)
 
         selected_target_mods = set(rule.get("target_mods", []))
         for label, _layer, prefix in KEYD_SOURCE_MODIFIERS:
@@ -961,11 +935,11 @@ class KeydShortcutDialog(Gtk.Dialog):
             self.target_mod_box.pack_start(check, False, False, 0)
             self.target_mod_checks.append(check)
 
-        grid.attach(Gtk.Label(label="Tecla destino", xalign=0), 0, target_row_offset + 1, 1, 1)
+        grid.attach(Gtk.Label(label="Tecla destino", xalign=0), 0, 7, 1, 1)
         self.target_key_combo = self.make_key_combo(rule.get("target_key", ""))
-        grid.attach(self.target_key_combo, 1, target_row_offset + 1, 1, 1)
+        grid.attach(self.target_key_combo, 1, 7, 1, 1)
 
-        self.on_action_toggled(None)
+        self.on_action_toggled(self.block_radio)
         self.show_all()
 
     def make_key_combo(self, selected_key):
@@ -987,7 +961,7 @@ class KeydShortcutDialog(Gtk.Dialog):
         return self.key_options[index][1]
 
     def on_action_toggled(self, _button):
-        sensitive = self.block_all_shortcuts or self.replace_radio.get_active()
+        sensitive = self.replace_radio.get_active()
         self.target_key_combo.set_sensitive(sensitive)
         for child in self.target_mod_box.get_children():
             child.set_sensitive(sensitive)
@@ -999,7 +973,7 @@ class KeydShortcutDialog(Gtk.Dialog):
         return {
             "source_mods": source_mods,
             "source_key": self.selected_key(self.source_key_combo),
-            "action": "replace" if self.block_all_shortcuts or self.replace_radio.get_active() else "block",
+            "action": "replace" if self.replace_radio.get_active() else "block",
             "target_mods": target_mods,
             "target_key": self.selected_key(self.target_key_combo),
         }
@@ -1019,7 +993,6 @@ class UokLayoutEditor(Gtk.Window):
         self.changes = {}
         self.buttons = {}
         self.keyd_shortcuts = []
-        self.keyd_block_all_shortcuts = False
         self.keyd_rows = []
         self.extra_keys = []
         self.function_key_row = detected_function_key_row(
@@ -1027,32 +1000,23 @@ class UokLayoutEditor(Gtk.Window):
             self.keycode_to_name,
         )
 
-        # Separador redimensionable izquierda/derecha.
-        root_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        root_paned.set_wide_handle(True)
-        root_paned.set_hexpand(True)
-        root_paned.set_vexpand(True)
-        self.add(root_paned)
-        self.root_paned = root_paned
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.add(root)
 
         self.source_items = load_xkb_sources(CURRENT_PROFILE, CONFIG / "profiles")
 
         sidebar = self.build_sources_sidebar()
-        sidebar.set_hexpand(True)
-        sidebar.set_vexpand(True)
-        root_paned.pack1(sidebar, resize=True, shrink=False)
+        root.pack_start(sidebar, False, False, 0)
 
-        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        right.set_hexpand(True)
-        right.set_vexpand(True)
-        root_paned.pack2(right, resize=True, shrink=False)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        root.pack_start(content, True, True, 0)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         header.set_margin_top(8)
         header.set_margin_bottom(8)
         header.set_margin_start(8)
         header.set_margin_end(8)
-        right.pack_start(header, False, False, 0)
+        content.pack_start(header, False, False, 0)
 
         self.base_label = Gtk.Label(label=f"Base: {self.include_name}")
         self.base_label.set_xalign(0)
@@ -1074,22 +1038,15 @@ class UokLayoutEditor(Gtk.Window):
         export_btn.connect("clicked", self.on_export_xkb)
         header.pack_start(export_btn, False, False, 0)
 
-        save_btn = Gtk.Button(label="Añadir configuración")
+        save_btn = Gtk.Button(label="Importar en UOK…")
         save_btn.connect("clicked", self.on_save)
         header.pack_start(save_btn, False, False, 0)
-
-        # Separador redimensionable teclado/atajos.
-        right_paned = Gtk.Paned(orientation=Gtk.Orientation.VERTICAL)
-        right_paned.set_wide_handle(True)
-        right_paned.set_hexpand(True)
-        right_paned.set_vexpand(True)
-        right.pack_start(right_paned, True, True, 0)
-        self.right_paned = right_paned
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scrolled.set_hexpand(True)
         scrolled.set_vexpand(True)
+        content.pack_start(scrolled, True, True, 0)
 
         self.keyboard_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.keyboard_outer.set_hexpand(True)
@@ -1118,32 +1075,13 @@ class UokLayoutEditor(Gtk.Window):
         self.keyboard_frame.add(self.keyboard_box)
         self.keyboard_outer.pack_start(self.keyboard_frame, False, False, 0)
 
+        self.keyd_editor = self.build_keyd_editor()
+        self.keyboard_outer.pack_start(self.keyd_editor, False, False, 10)
+
         try:
             scrolled.add_with_viewport(self.keyboard_outer)
         except AttributeError:
             scrolled.add(self.keyboard_outer)
-
-        self.keyd_editor = self.build_keyd_editor()
-        self.keyd_editor.set_hexpand(True)
-        self.keyd_editor.set_vexpand(True)
-
-        right_paned.pack1(scrolled, resize=True, shrink=False)
-        right_paned.pack2(self.keyd_editor, resize=True, shrink=False)
-
-        # Posiciones iniciales tras mostrar la ventana. Si se ponen antes,
-        # GTK puede ignorarlas porque todavía no conoce el tamaño real.
-        def set_initial_paned_positions():
-            root_paned.set_position(150)
-
-            allocation = right_paned.get_allocation()
-            if allocation.height > 0:
-                right_paned.set_position(max(220, allocation.height - 175))
-            else:
-                right_paned.set_position(445)
-
-            return False
-
-        Gdk.threads_add_idle(0, set_initial_paned_positions)
 
         self.draw_keyboard()
         self.show_all()
@@ -1151,11 +1089,11 @@ class UokLayoutEditor(Gtk.Window):
     def build_sources_sidebar(self):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         outer.get_style_context().add_class("uok-sidebar")
-        outer.set_size_request(140, -1)
+        outer.set_size_request(280, -1)
         outer.set_hexpand(False)
         outer.set_vexpand(True)
-        outer.set_margin_top(10)
-        outer.set_margin_bottom(10)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
         outer.set_margin_start(8)
         outer.set_margin_end(8)
 
@@ -1405,96 +1343,51 @@ class UokLayoutEditor(Gtk.Window):
         frame = Gtk.Frame(label="Atajos keyd")
         frame.get_style_context().add_class("uok-keyd-frame")
         frame.set_shadow_type(Gtk.ShadowType.NONE)
-        frame.set_halign(Gtk.Align.FILL)
-        frame.set_hexpand(True)
-        frame.set_vexpand(True)
-        frame.set_margin_top(6)
-        frame.set_margin_bottom(6)
-        frame.set_margin_start(8)
-        frame.set_margin_end(8)
+        frame.set_halign(Gtk.Align.CENTER)
+        frame.set_hexpand(False)
+        frame.set_margin_top(8)
+        frame.set_margin_bottom(8)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        outer.set_margin_top(5)
-        outer.set_margin_bottom(5)
-        outer.set_margin_start(8)
-        outer.set_margin_end(8)
-        outer.set_vexpand(True)
-        outer.set_hexpand(True)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        outer.set_margin_top(10)
+        outer.set_margin_bottom(10)
+        outer.set_margin_start(12)
+        outer.set_margin_end(12)
+        outer.set_size_request(max(760, self.max_main_keyboard_width()), -1)
         frame.add(outer)
 
-        top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        top_row.set_vexpand(False)
-        top_row.set_hexpand(True)
-        outer.pack_start(top_row, False, False, 0)
+        help_label = Gtk.Label(label="Bloquea atajos concretos o sustitúyelos por otros. Ejemplo: Ctrl+Alt+H → flecha izquierda, o Ctrl+Q → noop.")
+        help_label.set_xalign(0)
+        help_label.set_line_wrap(True)
+        help_label.get_style_context().add_class("uok-keyd-help")
+        outer.pack_start(help_label, False, False, 0)
 
-        self.keyd_block_all_check = Gtk.CheckButton(label="Bloquear todos los atajos")
-        self.keyd_block_all_check.set_active(self.keyd_block_all_shortcuts)
-        self.keyd_block_all_check.set_tooltip_text("Bloquea todos los atajos con modificadores; las reglas añadidas pasan a ser excepciones o reemplazos.")
-        self.keyd_block_all_check.connect("toggled", self.on_keyd_block_all_toggled)
-        top_row.pack_start(self.keyd_block_all_check, False, False, 0)
+        self.keyd_list = Gtk.ListBox()
+        self.keyd_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.keyd_list.set_size_request(-1, 92)
+        outer.pack_start(self.keyd_list, False, False, 0)
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        buttons.set_vexpand(False)
-        buttons.set_valign(Gtk.Align.CENTER)
-        buttons.set_halign(Gtk.Align.START)
-        top_row.pack_start(buttons, False, False, 0)
+        outer.pack_start(buttons, False, False, 0)
 
         add_btn = Gtk.Button(label="Añadir atajo…")
-        add_btn.set_tooltip_text("Añadir atajo")
         add_btn.connect("clicked", self.on_add_keyd_shortcut)
         buttons.pack_start(add_btn, False, False, 0)
 
         edit_btn = Gtk.Button(label="Editar seleccionado…")
-        edit_btn.set_tooltip_text("Editar atajo seleccionado")
         edit_btn.connect("clicked", self.on_edit_keyd_shortcut)
         buttons.pack_start(edit_btn, False, False, 0)
 
         delete_btn = Gtk.Button(label="Eliminar seleccionado")
-        delete_btn.set_tooltip_text("Eliminar atajo seleccionado")
         delete_btn.connect("clicked", self.on_delete_keyd_shortcut)
         buttons.pack_start(delete_btn, False, False, 0)
 
-        preview_btn = Gtk.Button(label="Exportar keyd.conf…")
-        preview_btn.set_tooltip_text("Exportar keyd.conf generado")
+        preview_btn = Gtk.Button(label="Ver keyd.conf")
         preview_btn.connect("clicked", self.on_preview_keyd_conf)
         buttons.pack_start(preview_btn, False, False, 0)
 
-        keyd_scroll = Gtk.ScrolledWindow()
-        keyd_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        keyd_scroll.set_hexpand(True)
-        keyd_scroll.set_vexpand(True)
-        keyd_scroll.set_size_request(-1, 154)
-        keyd_scroll.get_style_context().add_class("uok-keyd-scroll")
-
-        self.keyd_list = Gtk.FlowBox()
-        self.keyd_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.keyd_list.set_vexpand(False)
-        self.keyd_list.set_hexpand(True)
-        self.keyd_list.set_max_children_per_line(99)
-        self.keyd_list.set_min_children_per_line(1)
-        self.keyd_list.set_column_spacing(5)
-        self.keyd_list.set_row_spacing(10)
-        self.keyd_list.set_homogeneous(False)
-        self.keyd_list.set_valign(Gtk.Align.START)
-        keyd_scroll.add(self.keyd_list)
-
-        outer.pack_start(keyd_scroll, True, True, 0)
-
         self.refresh_keyd_shortcuts()
         return frame
-
-    def on_keyd_block_all_toggled(self, check):
-        self.keyd_block_all_shortcuts = check.get_active()
-
-        # En modo global no hay reglas de bloqueo individual; sólo excepciones/reemplazos.
-        if self.keyd_block_all_shortcuts:
-            for rule in self.keyd_shortcuts:
-                if rule.get("action") != "replace":
-                    rule["action"] = "replace"
-                    rule.setdefault("target_mods", [])
-                    rule.setdefault("target_key", rule.get("source_key", ""))
-
-        self.refresh_keyd_shortcuts()
 
     def keyd_key_options(self):
         items = []
@@ -1547,11 +1440,10 @@ class UokLayoutEditor(Gtk.Window):
         if rule.get("action") == "replace":
             target_mods = [label for label, _layer, prefix in KEYD_SOURCE_MODIFIERS if prefix in rule.get("target_mods", [])]
             target = "+".join(target_mods + [rule.get("target_key", "")])
-            if getattr(self, "keyd_block_all_shortcuts", False):
-                return f"{source}  permitido como  {target}"
-            return f"{source}  →  {target}"
+        else:
+            target = "bloqueado"
 
-        return f"{source}  →  bloqueado"
+        return f"{source}  →  {target}"
 
     def refresh_keyd_shortcuts(self):
         if not hasattr(self, "keyd_list"):
@@ -1561,46 +1453,37 @@ class UokLayoutEditor(Gtk.Window):
             self.keyd_list.remove(child)
 
         if not self.keyd_shortcuts:
-            child = Gtk.FlowBoxChild()
-            child.set_can_focus(False)
-            label = Gtk.Label(label="Bloqueo global activo: todos los atajos quedan bloqueados." if self.keyd_block_all_shortcuts else "Sin atajos keyd definidos para esta configuración.")
+            row = Gtk.ListBoxRow()
+            row.set_selectable(False)
+            row.set_activatable(False)
+            label = Gtk.Label(label="Sin atajos keyd definidos para esta configuración.")
             label.set_xalign(0)
             label.set_margin_top(6)
             label.set_margin_bottom(6)
             label.set_margin_start(8)
             label.set_margin_end(8)
-            child.add(label)
-            self.keyd_list.add(child)
+            row.add(label)
+            self.keyd_list.add(row)
         else:
             for idx, rule in enumerate(self.keyd_shortcuts):
-                child = Gtk.FlowBoxChild()
-                child.uok_keyd_index = idx
-                child.get_style_context().add_class("uok-keyd-chip")
-
+                row = Gtk.ListBoxRow()
+                row.uok_keyd_index = idx
                 label = Gtk.Label(label=self.keyd_rule_label(rule))
                 label.set_xalign(0)
-                label.set_margin_top(1)
-                label.set_margin_bottom(1)
-                label.set_margin_start(6)
-                label.set_margin_end(6)
-                label.set_single_line_mode(True)
-                label.set_ellipsize(3)
-
-                child.add(label)
-                self.keyd_list.add(child)
+                label.set_margin_top(6)
+                label.set_margin_bottom(6)
+                label.set_margin_start(8)
+                label.set_margin_end(8)
+                row.add(label)
+                self.keyd_list.add(row)
 
         self.keyd_list.show_all()
 
     def selected_keyd_index(self):
-        if not hasattr(self, "keyd_list"):
+        row = self.keyd_list.get_selected_row() if hasattr(self, "keyd_list") else None
+        if row is None:
             return None
-
-        selected = self.keyd_list.get_selected_children()
-        if not selected:
-            return None
-
-        child = selected[0]
-        return getattr(child, "uok_keyd_index", None)
+        return getattr(row, "uok_keyd_index", None)
 
     def on_add_keyd_shortcut(self, _button):
         options = self.keyd_key_options()
@@ -1608,7 +1491,7 @@ class UokLayoutEditor(Gtk.Window):
             self.message("No hay teclas disponibles", "No se han podido generar teclas compatibles con keyd.", Gtk.MessageType.ERROR)
             return
 
-        dialog = KeydShortcutDialog(self, options, block_all_shortcuts=self.keyd_block_all_shortcuts)
+        dialog = KeydShortcutDialog(self, options)
         response = dialog.run()
         if response == Gtk.ResponseType.OK:
             self.keyd_shortcuts.append(dialog.values())
@@ -1622,7 +1505,7 @@ class UokLayoutEditor(Gtk.Window):
             return
 
         options = self.keyd_key_options()
-        dialog = KeydShortcutDialog(self, options, self.keyd_shortcuts[index], block_all_shortcuts=self.keyd_block_all_shortcuts)
+        dialog = KeydShortcutDialog(self, options, self.keyd_shortcuts[index])
         response = dialog.run()
         if response == Gtk.ResponseType.OK:
             self.keyd_shortcuts[index] = dialog.values()
@@ -1638,176 +1521,17 @@ class UokLayoutEditor(Gtk.Window):
         del self.keyd_shortcuts[index]
         self.refresh_keyd_shortcuts()
 
-    def keyd_modifier_specs(self):
-        return [
-            {
-                "id": "control",
-                "short": "ctrl",
-                "layer": "ctrlq",
-                "target_prefix": "C",
-                "keys": ["leftcontrol", "rightcontrol"],
-            },
-            {
-                "id": "alt",
-                "short": "alt",
-                "layer": "altq",
-                "target_prefix": "A",
-                "keys": ["leftalt"],
-            },
-            {
-                "id": "shift",
-                "short": "shift",
-                "layer": "shiftq",
-                "target_prefix": "S",
-                "keys": ["leftshift", "rightshift"],
-            },
-            {
-                "id": "meta",
-                "short": "meta",
-                "layer": "metaq",
-                "target_prefix": "M",
-                "keys": ["leftmeta", "rightmeta"],
-            },
-            {
-                "id": "altgr",
-                "short": "altgr",
-                "layer": "altgrq",
-                "target_prefix": "G",
-                "keys": ["rightalt"],
-            },
-        ]
-
-    def keyd_modifier_order(self):
-        return [spec["id"] for spec in self.keyd_modifier_specs()]
-
-    def keyd_modifier_spec(self, mod):
-        for spec in self.keyd_modifier_specs():
-            if spec["id"] == mod:
-                return spec
-        return None
-
-    def keyd_normalized_mods(self, mods):
-        selected = set(mods or [])
-        return tuple(
-            mod
-            for mod in self.keyd_modifier_order()
-            if mod in selected
-        )
-
-    def keyd_layer_name_for_mods(self, mods):
-        mods = self.keyd_normalized_mods(mods)
-
-        if not mods:
-            return "main"
-
-        if len(mods) == 1:
-            spec = self.keyd_modifier_spec(mods[0])
-            return spec["layer"] if spec else f"{mods[0]}q"
-
-        parts = []
-        for mod in mods:
-            spec = self.keyd_modifier_spec(mod)
-            parts.append(spec["short"] if spec else mod)
-
-        return "_".join(parts) + "q"
-
-    def keyd_all_modifier_combinations(self):
-        mods = self.keyd_modifier_order()
-        out = []
-
-        for mask in range(1, 1 << len(mods)):
-            combo = tuple(
-                mods[i]
-                for i in range(len(mods))
-                if mask & (1 << i)
-            )
-            out.append(combo)
-
-        return out
-
-    def keyd_required_layer_sets(self, rules):
-        required = set()
-
-        for rule in rules:
-            mods = self.keyd_normalized_mods(rule.get("source_mods", []))
-            if mods:
-                required.add(mods)
-
-                # Añadimos también las capas intermedias para poder llegar a
-                # combinaciones como Ctrl+Alt desde Ctrl o desde Alt.
-                for i in range(1, len(mods)):
-                    required.add(mods[:i])
-
-        if self.keyd_block_all_shortcuts:
-            required.update(self.keyd_all_modifier_combinations())
-
-        return required
-
-    def keyd_add_layer_transitions(self, groups, required_layers):
-        # [main] activa las capas de modificadores.
-        groups.setdefault("main", {})
-
-        required_layers = {
-            self.keyd_normalized_mods(layer)
-            for layer in required_layers
-            if layer
-        }
-
-        # Para llegar a Ctrl+Alt independientemente del orden:
-        # [main] leftcontrol -> ctrlq
-        # [main] leftalt     -> altq
-        # [ctrlq] leftalt    -> ctrl_altq
-        # [altq] leftcontrol -> ctrl_altq
-        for current in [tuple()] + sorted(required_layers, key=lambda x: (len(x), x)):
-            current_set = set(current)
-            current_layer = self.keyd_layer_name_for_mods(current)
-            groups.setdefault(current_layer, {})
-
-            for spec in self.keyd_modifier_specs():
-                mod = spec["id"]
-
-                if mod in current_set:
-                    continue
-
-                next_mods = self.keyd_normalized_mods(tuple(current) + (mod,))
-
-                if next_mods not in required_layers:
-                    continue
-
-                next_layer = self.keyd_layer_name_for_mods(next_mods)
-
-                for key_name in spec["keys"]:
-                    groups[current_layer][key_name] = (f"layer({next_layer})", None)
-
     def build_keyd_conf(self):
-        if not self.keyd_shortcuts and not self.keyd_block_all_shortcuts:
+        if not self.keyd_shortcuts:
             return ""
 
         groups = {}
 
-        def put(layer, key, target, rule=None):
-            if not key:
-                return
-            groups.setdefault(layer or "main", {})[key] = (target, rule)
-
-        required_layers = self.keyd_required_layer_sets(self.keyd_shortcuts)
-        self.keyd_add_layer_transitions(groups, required_layers)
-
         for rule in self.keyd_shortcuts:
-            mods = self.keyd_normalized_mods(rule.get("source_mods", []))
-            layer = self.keyd_layer_name_for_mods(mods)
-            key = rule.get("source_key", "")
-            put(layer, key, self.keyd_target_expr(rule), rule)
-
-        if self.keyd_block_all_shortcuts:
-            keys = [key_name for _label, key_name, _code in self.keyd_key_options()]
-
-            for mods in self.keyd_all_modifier_combinations():
-                layer = self.keyd_layer_name_for_mods(mods)
-
-                for key in keys:
-                    # No pisa excepciones/reemplazos ya añadidos por el usuario.
-                    groups.setdefault(layer, {}).setdefault(key, ("noop", None))
+            layer, key = self.keyd_source_expr(rule)
+            if not key:
+                continue
+            groups.setdefault(layer or "main", []).append((key, self.keyd_target_expr(rule), rule))
 
         lines = [
             "# Generated by UrOwnKeyboard visual editor",
@@ -1818,79 +1542,21 @@ class UokLayoutEditor(Gtk.Window):
             "",
         ]
 
-        if self.keyd_block_all_shortcuts:
-            lines.extend([
-                "# Global shortcut blocking is enabled.",
-                "# Modifier layers are generated in dvorakesprogrammer-style.",
-                "# User rules override the default noop entries.",
-                "",
-            ])
-
-        def layer_sort_key(layer_name):
-            if layer_name == "main":
-                return (0, 0, layer_name)
-
-            for combo in self.keyd_all_modifier_combinations():
-                if self.keyd_layer_name_for_mods(combo) == layer_name:
-                    return (1, len(combo), combo)
-
-            return (2, 99, layer_name)
-
-        for layer_name in sorted(groups, key=layer_sort_key):
+        for layer_name in sorted(groups, key=lambda x: (x != "main", x)):
             lines.append(f"[{layer_name}]")
-
-            items = groups[layer_name]
-
-            # Primero transiciones layer(...), luego reglas normales.
-            def item_sort_key(item):
-                key, value = item
-                target, rule = value
-                is_transition = target.startswith("layer(")
-                return (0 if is_transition else 1, key)
-
-            for key, (target, rule) in sorted(items.items(), key=item_sort_key):
-                if rule:
-                    comment = keyd_escape_comment_text(self.keyd_rule_label(rule))
-                    lines.append(f"# {comment}")
+            for key, target, rule in groups[layer_name]:
+                comment = keyd_escape_comment_text(self.keyd_rule_label(rule))
+                lines.append(f"# {comment}")
                 lines.append(f"{key} = {target}")
-
             lines.append("")
 
         return "\n".join(lines)
 
     def on_preview_keyd_conf(self, _button):
         content = self.build_keyd_conf()
-
         if not content:
-            self.message(
-                "No hay keyd.conf para exportar",
-                "Activa el bloqueo global o añade algún atajo keyd antes de exportar.",
-                Gtk.MessageType.INFO,
-            )
-            return
-
-        chooser = Gtk.FileChooserDialog(
-            title="Exportar keyd.conf",
-            transient_for=self,
-            action=Gtk.FileChooserAction.SAVE,
-        )
-
-        chooser.add_buttons(
-            "Cancelar", Gtk.ResponseType.CANCEL,
-            "Exportar", Gtk.ResponseType.OK,
-        )
-        chooser.set_do_overwrite_confirmation(True)
-
-        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.layout_name()).strip("_") or "uok"
-        chooser.set_current_name(safe + ".keyd.conf")
-
-        response = chooser.run()
-        filename = chooser.get_filename()
-        chooser.destroy()
-
-        if response == Gtk.ResponseType.OK and filename:
-            Path(filename).write_text(content, encoding="utf-8")
-            self.message("keyd.conf exportado", filename)
+            content = "No hay atajos keyd definidos."
+        self.message("keyd.conf generado", content)
 
     def draw_keyboard(self):
         for child in list(self.keyboard_box.get_children()):
@@ -2026,7 +1692,7 @@ class UokLayoutEditor(Gtk.Window):
         dialog.destroy()
 
     def warn_if_no_changes(self):
-        if self.changes or self.keyd_shortcuts or self.keyd_block_all_shortcuts:
+        if self.changes or self.keyd_shortcuts:
             return True
 
         self.message("No hay cambios", "Edita alguna tecla o añade algún atajo keyd antes de guardar.")
@@ -2144,24 +1810,6 @@ def main():
         opacity: 0.75;
     }
 
-    .uok-keyd-scroll {
-        border: 1px solid alpha(@theme_fg_color, 0.18);
-        border-radius: 6px;
-        background-color: alpha(@theme_base_color, 0.65);
-        padding: 2px;
-    }
-
-    .uok-keyd-chip {
-        border: 1px solid alpha(@theme_fg_color, 0.20);
-        border-radius: 999px;
-        background-color: alpha(@theme_fg_color, 0.06);
-    }
-
-    .uok-keyd-chip:selected {
-        background-color: @theme_selected_bg_color;
-        color: @theme_selected_fg_color;
-    }
-
     .uok-keyd-section-title {
         font-weight: bold;
     }
@@ -2170,46 +1818,6 @@ def main():
         margin-top: 4px;
         margin-bottom: 2px;
         font-weight: bold;
-    }
-
-    paned > separator {
-        background-color: transparent;
-        border: none;
-        box-shadow: none;
-    }
-
-    paned.horizontal > separator {
-        min-width: 6px;
-    }
-
-    paned.vertical > separator {
-        min-height: 6px;
-    }
-
-    paned > separator:hover {
-        background-color: transparent;
-    }
-
-    GtkPaned > separator,
-    paned > separator {
-        background-color: transparent;
-        border: none;
-        box-shadow: none;
-    }
-
-    GtkPaned.horizontal > separator,
-    paned.horizontal > separator {
-        min-width: 6px;
-    }
-
-    GtkPaned.vertical > separator,
-    paned.vertical > separator {
-        min-height: 6px;
-    }
-
-    GtkPaned > separator:hover,
-    paned > separator:hover {
-        background-color: transparent;
     }
 
     .uok-keycap {

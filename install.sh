@@ -140,16 +140,6 @@ else
     echo "  $HOME/.local/bin/uok-indicator-start"
     echo "Log:"
     echo "  cat $HOME/.cache/urownkeyboard/indicator.log"
-firm that the indicator is still running."
-    echo "Manual test:"
-    echo "  $HOME/.local/bin/uok-indicator-start"
-    echo "Log:"
-    echo "  cat $HOME/.cache/urownkeyboard/indicator.log"
-firm that the indicator is still running."
-    echo "Manual test:"
-    echo "  $HOME/.local/bin/teclado-indicador.py"
-    echo "Log:"
-    echo "  cat /tmp/teclado-indicador.log"
 fi
 
 echo "Installation complete."

@@ -86,8 +86,11 @@ def file_hash(path):
 
 
 def same_file(a, b):
+    if not a and not b:
+        return True
+
     if not a or not b:
-        return a == b
+        return False
 
     a = Path(a).expanduser()
     b = Path(b).expanduser()
@@ -227,7 +230,8 @@ def cmd_list(_args):
 
     for profile in profiles:
         marker = "* " if profile.get("id") == current_id else ""
-        print(f"{marker}{profile.get('id')} — {profile.get('name')}")
+        keyd_mark = " + keyd" if profile.get("keyd_conf") else ""
+        print(f"{marker}{profile.get('id')} — {profile.get('name')}{keyd_mark}")
 
 
 def cmd_import(args):
@@ -275,6 +279,7 @@ def cmd_import(args):
         )
 
     profile = {
+        "type": "imported-profile",
         "id": layout_id,
         "name": name,
         "xkb_file": str(dest_xkb),
@@ -287,10 +292,12 @@ def cmd_import(args):
         json.dumps(profile, indent=2, ensure_ascii=False)
     )
 
+    suffix = " with keyd" if dest_keyd else ""
+
     if layout_id != base_id:
-        print(f"Configuration imported as: {layout_id}")
+        print(f"Configuration imported as: {layout_id}{suffix}")
     else:
-        print(f"Configuration imported: {layout_id}")
+        print(f"Configuration imported: {layout_id}{suffix}")
 
     refresh_graphical_indicator()
 
@@ -371,7 +378,13 @@ def cmd_show_keyd(_args):
         print("The active configuration has no associated keyd.conf.")
         return
 
-    print(Path(keyd_conf).read_text())
+    path = Path(keyd_conf).expanduser()
+
+    if not path.exists():
+        print(f"The active configuration references a missing keyd.conf: {path}")
+        return
+
+    print(path.read_text())
 
 
 
