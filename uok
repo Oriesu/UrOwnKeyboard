@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unicodedata
 from pathlib import Path
+import sys
 
 HOME = Path.home()
 CONFIG = HOME / ".config" / "teclado-indicador"
@@ -179,16 +180,30 @@ def apply_xkb(layout_id):
 
 
 def apply_keyd(keyd_conf):
-    if keyd_conf:
-        return subprocess.run(
-            ["sudo", "/usr/local/sbin/keyd-aplicar-conf", str(keyd_conf)],
-            text=True,
-        )
+    helper = "/usr/local/sbin/keyd-aplicar-conf"
 
-    return subprocess.run(
-        ["sudo", "/usr/local/sbin/keyd-aplicar-conf", "--off"],
-        text=True,
-    )
+    cmd = ["sudo", "-n", helper]
+
+    if keyd_conf:
+        cmd.append(str(keyd_conf))
+    else:
+        cmd.append("--off")
+
+    try:
+        return subprocess.run(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=12,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            cmd,
+            124,
+            exc.stdout or "",
+            "Timed out applying keyd.conf. XKB can continue, but keyd was not applied.",
+        )
 
 
 def delete_file_if_safe(path_str):
@@ -311,13 +326,16 @@ def cmd_activate(args):
     layout_id = profile["id"]
     keyd_conf = profile.get("keyd_conf")
 
-    # Apply keyd first. Reloading keyd can reset the XKB map.
+    keyd_warning = ""
+
+    # keyd es opcional. Si falla, avisamos pero no bloqueamos XKB.
+    # Esto evita que un problema del daemon keyd impida activar el teclado creado.
     result = apply_keyd(keyd_conf)
 
     if result.returncode != 0:
-        raise SystemExit("keyd could not be applied.")
+        keyd_warning = "WARNING: keyd could not be applied. XKB was activated, but the physical keyd shortcuts/remaps were not."
 
-    subprocess.run(["sleep", "1"], text=True)
+    subprocess.run(["sleep", "0.4"], text=True)
 
     # Apply XKB last, using xkbcomp. This is the method that works manually.
     result = apply_xkb(layout_id)
@@ -328,11 +346,17 @@ def cmd_activate(args):
     current = dict(profile)
     current["type"] = "imported-profile"
 
+    if keyd_warning:
+        current["keyd_warning"] = keyd_warning
+
     CURRENT_PROFILE.write_text(
         json.dumps(current, indent=2, ensure_ascii=False)
     )
 
     print(f"Active configuration: {profile['name']}")
+
+    if keyd_warning:
+        print(keyd_warning, file=sys.stderr)
 
 
 def cmd_delete(args):

@@ -6,7 +6,7 @@ EXT_UUID="hide-input-source@teclado-indicador"
 
 echo "Installing dependencias..."
 sudo apt update
-sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator x11-xkb-utils fonts-noto-core fonts-noto-extra
+sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator x11-xkb-utils fonts-noto-core fonts-noto-extra xfconf
 
 if ! command -v keyd >/dev/null 2>&1; then
     echo "keyd is not installed. Installing keyd..."

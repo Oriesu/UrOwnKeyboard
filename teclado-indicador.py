@@ -76,12 +76,116 @@ def unique_layout_id(base_id):
         counter += 1
 
 
-def get_sources():
+def desktop_name():
+    values = [
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+    ]
+    return ":".join(values).lower()
+
+
+def is_xfce():
+    return "xfce" in desktop_name()
+
+
+def is_gnome():
+    return "gnome" in desktop_name()
+
+
+def split_csv_list(value):
+    return [x.strip() for x in (value or "").split(",")]
+
+
+def source_id_from_layout_variant(layout, variant=""):
+    layout = (layout or "").strip()
+    variant = (variant or "").strip()
+
+    if not layout:
+        return ""
+
+    return f"{layout}+{variant}" if variant else layout
+
+
+def parse_setxkbmap_sources():
+    result = run_menu_cmd(["setxkbmap", "-query"])
+    if result.returncode != 0:
+        return []
+
+    layouts = []
+    variants = []
+
+    for line in result.stdout.splitlines():
+        clean = line.strip()
+
+        if clean.startswith("layout:"):
+            layouts = split_csv_list(clean.split(":", 1)[1].strip())
+        elif clean.startswith("variant:"):
+            variants = split_csv_list(clean.split(":", 1)[1].strip())
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    out = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = source_id_from_layout_variant(layout, variant)
+        if source_id:
+            out.append(("xkb", source_id))
+
+    return out
+
+
+def xfconf_get(prop):
+    result = run_menu_cmd(["xfconf-query", "-c", "keyboard-layout", "-p", prop])
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def parse_xfce_sources():
+    layouts = split_csv_list(xfconf_get("/Default/XkbLayout"))
+    variants = split_csv_list(xfconf_get("/Default/XkbVariant"))
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    out = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = source_id_from_layout_variant(layout, variant)
+        if source_id:
+            out.append(("xkb", source_id))
+
+    # XFCE a veces no guarda todavía la lista en xfconf aunque XKB sí la tenga activa.
+    # Por eso mezclamos también lo que ve setxkbmap.
+    out.extend(parse_setxkbmap_sources())
+
+    seen = set()
+    unique = []
+
+    for item in out:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+
+    return unique
+
+
+def parse_gnome_sources():
     try:
         raw = sh("gsettings get org.gnome.desktop.input-sources sources")
         return ast.literal_eval(raw)
     except Exception:
         return []
+
+
+def get_sources():
+    if is_xfce():
+        sources = parse_xfce_sources()
+        if sources:
+            return sources
+
+    return parse_gnome_sources()
 
 
 def source_label(source_type, source_id):
@@ -220,8 +324,9 @@ def expected_source_spec(source_id):
 
 
 def verify_gnome_source_applied(source_type, source_id):
-    if keyd_is_active():
-        return False, "keyd sigue activo después de volver a una fuente normal."
+    # keyd puede y debe seguir activo como servicio.
+    # Al volver a una fuente normal, aplicar_keyd_off_sync() deja /etc/keyd/default.conf neutral.
+    # Por tanto no verificamos "systemctl is-active keyd", porque eso sólo indica que el daemon está arrancado.
 
     if source_type != "xkb":
         return True, ""
@@ -233,8 +338,6 @@ def verify_gnome_source_applied(source_type, source_id):
         return False, f"XKB no cambió al layout esperado. Esperado: {expected}. Actual: {got or 'desconocido'}."
 
     return True, ""
-
-
 def verify_uok_profile_applied(profile_id):
     # Los perfiles UOK se aplican con xkbcomp. En ese caso setxkbmap -query
     # puede seguir mostrando el layout base anterior, por ejemplo "es".
@@ -267,6 +370,9 @@ def aplicar_keyd_off_sync():
 
 
 def aplicar_gnome_source_sync(index):
+    if is_xfce():
+        return True
+
     result = run_menu_cmd([
         "gsettings",
         "set",
@@ -330,6 +436,7 @@ def activar_gnome_source(index, source_type, source_id):
         "name": label,
         "source_type": source_type,
         "source_id": source_id,
+        "desktop": "xfce" if is_xfce() else "gnome" if is_gnome() else "xkb",
         "keyd_conf": None,
     }
 
@@ -839,6 +946,89 @@ def aplicar_keyd_de_profile_o_apagar(profile):
     run("sudo /usr/local/sbin/keyd-aplicar-conf --off")
 
 
+def xfce_keyboard_plugin_ids():
+    result = run_menu_cmd(["xfconf-query", "-c", "xfce4-panel", "-l"])
+    if result.returncode != 0:
+        return []
+
+    plugin_ids = []
+
+    for line in result.stdout.splitlines():
+        m = re.fullmatch(r"/plugins/plugin-(\d+)", line.strip())
+        if not m:
+            continue
+
+        plugin_id = m.group(1)
+        name = run_menu_cmd([
+            "xfconf-query",
+            "-c",
+            "xfce4-panel",
+            "-p",
+            f"/plugins/plugin-{plugin_id}",
+        ])
+
+        if name.returncode == 0 and name.stdout.strip() in {"xkb", "keyboard-layouts"}:
+            plugin_ids.append(int(plugin_id))
+
+    return plugin_ids
+
+
+def xfconf_panel_array(prop):
+    result = run_menu_cmd(["xfconf-query", "-c", "xfce4-panel", "-p", prop])
+    if result.returncode != 0:
+        return []
+
+    return [int(x) for x in re.findall(r"=\s*(\d+)", result.stdout)]
+
+
+def xfconf_set_panel_array(prop, values):
+    if not values:
+        return False
+
+    cmd = ["xfconf-query", "-c", "xfce4-panel", "-p", prop, "--force-array"]
+
+    for value in values:
+        cmd.extend(["-t", "int", "-s", str(value)])
+
+    result = run_menu_cmd(cmd)
+    return result.returncode == 0
+
+
+def ocultar_menu_xfce():
+    if not is_xfce():
+        return
+
+    plugin_ids = set(xfce_keyboard_plugin_ids())
+    if not plugin_ids:
+        return
+
+    result = run_menu_cmd(["xfconf-query", "-c", "xfce4-panel", "-l"])
+    if result.returncode != 0:
+        return
+
+    changed = False
+
+    for line in result.stdout.splitlines():
+        prop = line.strip()
+
+        if not re.fullmatch(r"/panels/panel-\d+/plugin-ids", prop):
+            continue
+
+        current = xfconf_panel_array(prop)
+        if not current:
+            continue
+
+        new_values = [x for x in current if x not in plugin_ids]
+
+        if new_values != current:
+            if xfconf_set_panel_array(prop, new_values):
+                changed = True
+
+    if changed:
+        run_menu_cmd(["xfce4-panel", "-r"])
+        notify("UrOwnKeyboard", "XFCE keyboard layout indicator hidden")
+
+
 def sincronizar_estado_al_arrancar():
     current = get_current_profile()
 
@@ -979,6 +1169,2412 @@ indicator = AppIndicator3.Indicator.new(
 indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
 indicator.set_title("Keyboard")
 
+ocultar_menu_xfce()
+
+# --------------------------------------------------------------------
+# UOK desktop compatibility overrides: XFCE input sources
+# --------------------------------------------------------------------
+# Este bloque está colocado al final para no romper GNOME:
+# - En GNOME se mantienen gsettings + extensión GNOME.
+# - En XFCE se leen layouts desde XFCE/setxkbmap.
+# - En XFCE se oculta el plugin nativo de teclado del panel si existe.
+
+def uok_desktop_name():
+    return ":".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+    ]).lower()
+
+
+def uok_is_xfce():
+    return "xfce" in uok_desktop_name()
+
+
+def uok_is_gnome():
+    return "gnome" in uok_desktop_name()
+
+
+def uok_split_csv(value):
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
+
+
+def uok_source_id_from_layout_variant(layout, variant=""):
+    layout = (layout or "").strip()
+    variant = (variant or "").strip()
+
+    if not layout:
+        return ""
+
+    return f"{layout}+{variant}" if variant else layout
+
+
+def uok_unique_sources(sources):
+    out = []
+    seen = set()
+
+    for source in sources:
+        if len(source) != 2:
+            continue
+
+        source_type, source_id = source
+
+        if not source_id:
+            continue
+
+        key = (source_type, source_id)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        out.append(key)
+
+    return out
+
+
+def uok_parse_setxkbmap_sources():
+    result = run_menu_cmd(["setxkbmap", "-query"])
+    if result.returncode != 0:
+        return []
+
+    layouts = []
+    variants = []
+
+    for line in result.stdout.splitlines():
+        clean = line.strip()
+
+        if clean.startswith("layout:"):
+            layouts = uok_split_csv(clean.split(":", 1)[1].strip())
+        elif clean.startswith("variant:"):
+            raw_variants = clean.split(":", 1)[1].strip()
+            variants = [x.strip() for x in raw_variants.split(",")]
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    sources = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_source_id_from_layout_variant(layout, variant)
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_unique_sources(sources)
+
+
+def uok_xfconf_get(prop):
+    result = run_menu_cmd(["xfconf-query", "-c", "keyboard-layout", "-p", prop])
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def uok_parse_xfce_keyboard_sources():
+    layouts = uok_split_csv(uok_xfconf_get("/Default/XkbLayout"))
+    variants_raw = uok_xfconf_get("/Default/XkbVariant")
+    variants = [x.strip() for x in variants_raw.split(",")] if variants_raw else []
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    sources = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_source_id_from_layout_variant(layout, variant)
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_unique_sources(sources)
+
+
+def uok_parse_gnome_sources():
+    try:
+        raw = sh("gsettings get org.gnome.desktop.input-sources sources")
+        return ast.literal_eval(raw)
+    except Exception:
+        return []
+
+
+def get_sources():
+    if uok_is_xfce():
+        # Prioridad en XFCE:
+        # 1. setxkbmap si ya tiene varios layouts activos, porque refleja lo que realmente se está usando.
+        # 2. xfconf si XFCE tiene layouts configurados.
+        # 3. setxkbmap como fallback.
+        active_sources = uok_parse_setxkbmap_sources()
+        xfce_sources = uok_parse_xfce_keyboard_sources()
+
+        if len(active_sources) >= 2:
+            return active_sources
+
+        if xfce_sources:
+            return xfce_sources
+
+        return active_sources
+
+    # En GNOME mantenemos el comportamiento anterior.
+    return uok_parse_gnome_sources()
+
+
+def aplicar_gnome_source_sync(index):
+    # En XFCE no existe org.gnome.desktop.input-sources como fuente fiable.
+    # El cambio real se hace después con setxkbmap en aplicar_xkb_source_sync().
+    if uok_is_xfce():
+        return True
+
+    result = run_menu_cmd([
+        "gsettings",
+        "set",
+        "org.gnome.desktop.input-sources",
+        "current",
+        str(index),
+    ])
+
+    if result.returncode != 0:
+        show_error("UrOwnKeyboard - GNOME", command_error(result, "No se pudo cambiar la fuente GNOME."))
+        return False
+
+    return True
+
+
+def activar_gnome_source(index, source_type, source_id):
+    label = source_label(source_type, source_id)
+
+    if not aplicar_keyd_off_sync():
+        return
+
+    if not aplicar_gnome_source_sync(index):
+        return
+
+    if not aplicar_xkb_source_sync(source_type, source_id):
+        return
+
+    ok, msg = verify_gnome_source_applied(source_type, source_id)
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", msg)
+        return
+
+    current = {
+        "type": "gnome-source",
+        "name": label,
+        "source_type": source_type,
+        "source_id": source_id,
+        "desktop": "xfce" if uok_is_xfce() else "gnome" if uok_is_gnome() else "xkb",
+        "keyd_conf": None,
+    }
+
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
+    )
+
+    notify("Keyboard", label + " activated")
+
+
+def get_gnome_current_source():
+    # En XFCE devolvemos la primera fuente XKB conocida para que la sincronización
+    # inicial no dependa de gsettings de GNOME.
+    if uok_is_xfce():
+        sources = get_sources()
+        if not sources:
+            return None
+
+        source_type, source_id = sources[0]
+
+        return {
+            "index": 0,
+            "source_type": source_type,
+            "source_id": source_id,
+            "name": source_label(source_type, source_id),
+        }
+
+    sources = get_sources()
+
+    if not sources:
+        return None
+
+    try:
+        current_raw = sh("gsettings get org.gnome.desktop.input-sources current")
+        current = int(str(current_raw).replace("uint32", "").strip())
+    except Exception:
+        current = 0
+
+    if current < 0 or current >= len(sources):
+        current = 0
+
+    source = sources[current]
+
+    if len(source) != 2:
+        return None
+
+    source_type, source_id = source
+
+    return {
+        "index": current,
+        "source_type": source_type,
+        "source_id": source_id,
+        "name": source_label(source_type, source_id),
+    }
+
+
+def uok_xfce_keyboard_plugin_ids():
+    result = run_menu_cmd(["xfconf-query", "-c", "xfce4-panel", "-l"])
+    if result.returncode != 0:
+        return []
+
+    plugin_ids = []
+
+    for line in result.stdout.splitlines():
+        prop = line.strip()
+        m = re.fullmatch(r"/plugins/plugin-(\d+)", prop)
+        if not m:
+            continue
+
+        plugin_id = m.group(1)
+
+        name = run_menu_cmd([
+            "xfconf-query",
+            "-c",
+            "xfce4-panel",
+            "-p",
+            f"/plugins/plugin-{plugin_id}",
+        ])
+
+        if name.returncode != 0:
+            continue
+
+        plugin_name = name.stdout.strip().lower()
+
+        if plugin_name in {"xkb", "keyboard-layouts", "keyboard-layout"}:
+            plugin_ids.append(int(plugin_id))
+
+    return plugin_ids
+
+
+def uok_xfce_panel_array(prop):
+    result = run_menu_cmd(["xfconf-query", "-c", "xfce4-panel", "-p", prop])
+    if result.returncode != 0:
+        return []
+
+    values = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+
+        if not line:
+            continue
+
+        # xfconf puede imprimir:
+        #   1
+        #   2
+        # o:
+        #   Value[0]: 1
+        m = re.search(r"(-?\d+)\s*$", line)
+        if m:
+            values.append(int(m.group(1)))
+
+    return values
+
+
+def uok_xfce_set_panel_array(prop, values):
+    cmd = [
+        "xfconf-query",
+        "-c",
+        "xfce4-panel",
+        "-p",
+        prop,
+        "--force-array",
+    ]
+
+    for value in values:
+        cmd.extend(["-t", "int", "-s", str(value)])
+
+    result = run_menu_cmd(cmd)
+    return result.returncode == 0
+
+
+def ocultar_menu_xfce():
+    if not uok_is_xfce():
+        return
+
+    plugin_ids = set(uok_xfce_keyboard_plugin_ids())
+
+    if not plugin_ids:
+        return
+
+    result = run_menu_cmd(["xfconf-query", "-c", "xfce4-panel", "-l"])
+    if result.returncode != 0:
+        return
+
+    changed = False
+
+    for line in result.stdout.splitlines():
+        prop = line.strip()
+
+        if not re.fullmatch(r"/panels/panel-\d+/plugin-ids", prop):
+            continue
+
+        current = uok_xfce_panel_array(prop)
+
+        if not current:
+            continue
+
+        new_values = [x for x in current if x not in plugin_ids]
+
+        if new_values != current:
+            if uok_xfce_set_panel_array(prop, new_values):
+                changed = True
+
+    if changed:
+        run_menu_cmd(["xfce4-panel", "-r"])
+        notify("UrOwnKeyboard", "XFCE keyboard layout indicator hidden")
+
+
+# --------------------------------------------------------------------
+# UOK desktop compatibility overrides: XFCE input sources v2
+# --------------------------------------------------------------------
+# En GNOME se mantiene gsettings.
+# En XFCE se leen layouts desde:
+# - setxkbmap -query
+# - xfconf keyboard-layout
+# - configuración del plugin xfce4-xkb-plugin del panel
+# Además se intenta ocultar el plugin nativo de XFCE.
+
+def uok_desktop_name():
+    return ":".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+    ]).lower()
+
+
+def uok_is_xfce():
+    return "xfce" in uok_desktop_name()
+
+
+def uok_is_gnome():
+    return "gnome" in uok_desktop_name()
+
+
+def uok_split_csv_keep_empty(value):
+    return [x.strip() for x in (value or "").split(",")]
+
+
+def uok_split_csv_nonempty(value):
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
+
+
+def uok_source_id_from_layout_variant(layout, variant=""):
+    layout = (layout or "").strip()
+    variant = (variant or "").strip()
+
+    if not layout:
+        return ""
+
+    return f"{layout}+{variant}" if variant else layout
+
+
+def uok_unique_sources(sources):
+    out = []
+    seen = set()
+
+    for source in sources:
+        if len(source) != 2:
+            continue
+
+        source_type, source_id = source
+        source_type = (source_type or "").strip()
+        source_id = (source_id or "").strip()
+
+        if source_type != "xkb" or not source_id:
+            continue
+
+        key = (source_type, source_id)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        out.append(key)
+
+    return out
+
+
+def uok_parse_setxkbmap_sources():
+    result = run_menu_cmd(["setxkbmap", "-query"])
+    if result.returncode != 0:
+        return []
+
+    layouts = []
+    variants = []
+
+    for line in result.stdout.splitlines():
+        clean = line.strip()
+
+        if clean.startswith("layout:"):
+            layouts = uok_split_csv_nonempty(clean.split(":", 1)[1].strip())
+        elif clean.startswith("variant:"):
+            variants = uok_split_csv_keep_empty(clean.split(":", 1)[1].strip())
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    sources = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_source_id_from_layout_variant(layout, variant)
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_unique_sources(sources)
+
+
+def uok_xfconf_get(channel, prop):
+    result = run_menu_cmd(["xfconf-query", "-c", channel, "-p", prop])
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def uok_xfconf_list(channel):
+    result = run_menu_cmd(["xfconf-query", "-c", channel, "-l"])
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def uok_parse_xfce_keyboard_sources():
+    layouts = uok_split_csv_nonempty(
+        uok_xfconf_get("keyboard-layout", "/Default/XkbLayout")
+    )
+    variants = uok_split_csv_keep_empty(
+        uok_xfconf_get("keyboard-layout", "/Default/XkbVariant")
+    )
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    sources = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_source_id_from_layout_variant(layout, variant)
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_unique_sources(sources)
+
+
+def uok_xfce_plugin_ids():
+    props = uok_xfconf_list("xfce4-panel")
+    ids = []
+
+    for prop in props:
+        m = re.fullmatch(r"/plugins/plugin-(\d+)", prop)
+        if not m:
+            continue
+
+        plugin_id = m.group(1)
+        name = uok_xfconf_get("xfce4-panel", f"/plugins/plugin-{plugin_id}")
+        name_l = name.strip().lower()
+
+        if (
+            "xkb" in name_l
+            or "keyboard-layout" in name_l
+            or "keyboard layouts" in name_l
+        ):
+            ids.append(int(plugin_id))
+
+    return ids
+
+
+def uok_xfconf_values(channel, prop):
+    result = run_menu_cmd(["xfconf-query", "-c", channel, "-p", prop])
+    if result.returncode != 0:
+        return []
+
+    values = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        # Formatos típicos:
+        # Value[0]: es
+        # Value[1]: de
+        # es,de
+        # es
+        if ":" in line:
+            line = line.split(":", 1)[1].strip()
+
+        for part in line.split(","):
+            part = part.strip()
+            if part:
+                values.append(part)
+
+    return values
+
+
+def uok_parse_xfce_panel_xkb_plugin_sources():
+    sources = []
+
+    for plugin_id in uok_xfce_plugin_ids():
+        prefix = f"/plugins/plugin-{plugin_id}"
+        props = [
+            prop for prop in uok_xfconf_list("xfce4-panel")
+            if prop == prefix or prop.startswith(prefix + "/")
+        ]
+
+        layout_values = []
+        variant_values = []
+
+        for prop in props:
+            low = prop.lower()
+
+            if "layout" in low and not low.endswith("display-name"):
+                layout_values.extend(uok_xfconf_values("xfce4-panel", prop))
+
+            if "variant" in low:
+                variant_values.extend(uok_xfconf_values("xfce4-panel", prop))
+
+        # Limpieza: quedarse con códigos tipo es, us, de, fr, us+intl...
+        layouts = []
+        for value in layout_values:
+            value = value.strip()
+            if re.fullmatch(r"[a-z]{2,3}([+_][A-Za-z0-9_-]+)?", value):
+                layouts.append(value.replace("_", "+"))
+
+        variants = []
+        for value in variant_values:
+            value = value.strip()
+            if re.fullmatch(r"[A-Za-z0-9_-]*", value):
+                variants.append(value)
+
+        while len(variants) < len(layouts):
+            variants.append("")
+
+        for layout, variant in zip(layouts, variants):
+            if "+" in layout:
+                source_id = layout
+            else:
+                source_id = uok_source_id_from_layout_variant(layout, variant)
+
+            if source_id:
+                sources.append(("xkb", source_id))
+
+    return uok_unique_sources(sources)
+
+
+def uok_parse_gnome_sources():
+    try:
+        raw = sh("gsettings get org.gnome.desktop.input-sources sources")
+        return ast.literal_eval(raw)
+    except Exception:
+        return []
+
+
+def get_sources():
+    if uok_is_xfce():
+        sources = []
+
+        # Unimos todas las fuentes conocidas. Esto corrige el caso:
+        # setxkbmap muestra es/us, pero el plugin XFCE muestra es/de.
+        sources.extend(uok_parse_xfce_panel_xkb_plugin_sources())
+        sources.extend(uok_parse_xfce_keyboard_sources())
+        sources.extend(uok_parse_setxkbmap_sources())
+
+        return uok_unique_sources(sources)
+
+    return uok_parse_gnome_sources()
+
+
+def aplicar_gnome_source_sync(index):
+    if uok_is_xfce():
+        return True
+
+    result = run_menu_cmd([
+        "gsettings",
+        "set",
+        "org.gnome.desktop.input-sources",
+        "current",
+        str(index),
+    ])
+
+    if result.returncode != 0:
+        show_error("UrOwnKeyboard - GNOME", command_error(result, "No se pudo cambiar la fuente GNOME."))
+        return False
+
+    return True
+
+
+def activar_gnome_source(index, source_type, source_id):
+    label = source_label(source_type, source_id)
+
+    if not aplicar_keyd_off_sync():
+        return
+
+    if not aplicar_gnome_source_sync(index):
+        return
+
+    if not aplicar_xkb_source_sync(source_type, source_id):
+        return
+
+    ok, msg = verify_gnome_source_applied(source_type, source_id)
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", msg)
+        return
+
+    current = {
+        "type": "gnome-source",
+        "name": label,
+        "source_type": source_type,
+        "source_id": source_id,
+        "desktop": "xfce" if uok_is_xfce() else "gnome" if uok_is_gnome() else "xkb",
+        "keyd_conf": None,
+    }
+
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
+    )
+
+    notify("Keyboard", label + " activated")
+
+
+def get_gnome_current_source():
+    if uok_is_xfce():
+        sources = get_sources()
+        if not sources:
+            return None
+
+        source_type, source_id = sources[0]
+
+        return {
+            "index": 0,
+            "source_type": source_type,
+            "source_id": source_id,
+            "name": source_label(source_type, source_id),
+        }
+
+    sources = get_sources()
+
+    if not sources:
+        return None
+
+    try:
+        current_raw = sh("gsettings get org.gnome.desktop.input-sources current")
+        current = int(str(current_raw).replace("uint32", "").strip())
+    except Exception:
+        current = 0
+
+    if current < 0 or current >= len(sources):
+        current = 0
+
+    source = sources[current]
+
+    if len(source) != 2:
+        return None
+
+    source_type, source_id = source
+
+    return {
+        "index": current,
+        "source_type": source_type,
+        "source_id": source_id,
+        "name": source_label(source_type, source_id),
+    }
+
+
+def uok_xfce_panel_array(prop):
+    result = run_menu_cmd(["xfconf-query", "-c", "xfce4-panel", "-p", prop])
+    if result.returncode != 0:
+        return []
+
+    values = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        m = re.search(r"(-?\d+)\s*$", line)
+        if m:
+            values.append(int(m.group(1)))
+
+    return values
+
+
+def uok_xfce_set_panel_array(prop, values):
+    cmd = [
+        "xfconf-query",
+        "-c", "xfce4-panel",
+        "-p", prop,
+        "--force-array",
+    ]
+
+    for value in values:
+        cmd.extend(["-t", "int", "-s", str(value)])
+
+    result = run_menu_cmd(cmd)
+    return result.returncode == 0
+
+
+def ocultar_menu_xfce():
+    if not uok_is_xfce():
+        return
+
+    plugin_ids = set(uok_xfce_plugin_ids())
+
+    if not plugin_ids:
+        return
+
+    changed = False
+
+    for prop in uok_xfconf_list("xfce4-panel"):
+        if not re.fullmatch(r"/panels/panel-\d+/plugin-ids", prop):
+            continue
+
+        current = uok_xfce_panel_array(prop)
+        if not current:
+            continue
+
+        new_values = [x for x in current if x not in plugin_ids]
+
+        if new_values != current:
+            if uok_xfce_set_panel_array(prop, new_values):
+                changed = True
+
+    if changed:
+        run_menu_cmd(["xfce4-panel", "-r"])
+        notify("UrOwnKeyboard", "XFCE keyboard layout indicator hidden")
+
+
+# --------------------------------------------------------------------
+# UOK desktop compatibility overrides: XFCE input sources v3
+# --------------------------------------------------------------------
+# GNOME queda igual: gsettings.
+# XFCE lee:
+# - ~/.config/xfce4/panel/xkb-plugin-*.rc
+# - xfconf keyboard-layout
+# - setxkbmap -query
+# Y oculta el plugin nativo xkb-plugin-N del panel.
+
+def uok_desktop_name():
+    return ":".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+    ]).lower()
+
+
+def uok_is_xfce():
+    return "xfce" in uok_desktop_name()
+
+
+def uok_is_gnome():
+    return "gnome" in uok_desktop_name()
+
+
+def uok_split_csv_keep_empty(value):
+    return [x.strip() for x in (value or "").split(",")]
+
+
+def uok_split_csv_nonempty(value):
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
+
+
+def uok_source_id_from_layout_variant(layout, variant=""):
+    layout = (layout or "").strip()
+    variant = (variant or "").strip()
+
+    if not layout:
+        return ""
+
+    return f"{layout}+{variant}" if variant else layout
+
+
+def uok_unique_sources(sources):
+    out = []
+    seen = set()
+
+    for source in sources:
+        if len(source) != 2:
+            continue
+
+        source_type, source_id = source
+        source_type = (source_type or "").strip()
+        source_id = (source_id or "").strip()
+
+        if source_type != "xkb" or not source_id:
+            continue
+
+        key = (source_type, source_id)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        out.append(key)
+
+    return out
+
+
+def uok_parse_setxkbmap_sources():
+    result = run_menu_cmd(["setxkbmap", "-query"])
+    if result.returncode != 0:
+        return []
+
+    layouts = []
+    variants = []
+
+    for line in result.stdout.splitlines():
+        clean = line.strip()
+
+        if clean.startswith("layout:"):
+            layouts = uok_split_csv_nonempty(clean.split(":", 1)[1].strip())
+        elif clean.startswith("variant:"):
+            variants = uok_split_csv_keep_empty(clean.split(":", 1)[1].strip())
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    sources = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_source_id_from_layout_variant(layout, variant)
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_unique_sources(sources)
+
+
+def uok_xfconf_get(channel, prop):
+    result = run_menu_cmd(["xfconf-query", "-c", channel, "-p", prop])
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def uok_xfconf_list(channel):
+    result = run_menu_cmd(["xfconf-query", "-c", channel, "-l"])
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def uok_parse_xfce_keyboard_sources():
+    layouts = uok_split_csv_nonempty(
+        uok_xfconf_get("keyboard-layout", "/Default/XkbLayout")
+    )
+    variants = uok_split_csv_keep_empty(
+        uok_xfconf_get("keyboard-layout", "/Default/XkbVariant")
+    )
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    sources = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_source_id_from_layout_variant(layout, variant)
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_unique_sources(sources)
+
+
+def uok_xkb_plugin_rc_files():
+    panel_dir = HOME / ".config" / "xfce4" / "panel"
+    if not panel_dir.exists():
+        return []
+
+    return sorted(panel_dir.glob("xkb-plugin-*.rc"))
+
+
+def uok_xkb_plugin_ids_from_rc():
+    ids = []
+
+    for file in uok_xkb_plugin_rc_files():
+        m = re.fullmatch(r"xkb-plugin-(\d+)\.rc", file.name)
+        if m:
+            ids.append(int(m.group(1)))
+
+    return ids
+
+
+def uok_parse_xkb_plugin_rc_file(path):
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+
+    sources = []
+
+    # Formatos habituales posibles:
+    # layout=es,de
+    # layouts=es,de
+    # group_policy=...
+    # variant=,
+    # variants=,
+    layouts = []
+    variants = []
+
+    for line in text.splitlines():
+        clean = line.strip()
+
+        if not clean or clean.startswith("#") or "=" not in clean:
+            continue
+
+        key, value = clean.split("=", 1)
+        key = key.strip().lower()
+        value = value.strip()
+
+        if key in {"layout", "layouts", "kbd_layouts", "model_layouts"}:
+            layouts.extend(uok_split_csv_nonempty(value))
+
+        if key in {"variant", "variants", "kbd_variants", "model_variants"}:
+            variants.extend(uok_split_csv_keep_empty(value))
+
+    # Rescate genérico: busca códigos tras claves que contengan layout.
+    if not layouts:
+        for m in re.finditer(r"(?im)^\s*[^=\n]*layout[^=\n]*=\s*([^\n]+)$", text):
+            layouts.extend(uok_split_csv_nonempty(m.group(1).strip()))
+
+    if not variants:
+        for m in re.finditer(r"(?im)^\s*[^=\n]*variant[^=\n]*=\s*([^\n]+)$", text):
+            variants.extend(uok_split_csv_keep_empty(m.group(1).strip()))
+
+    clean_layouts = []
+
+    for value in layouts:
+        value = value.strip()
+
+        # A veces puede venir como "es\tSpanish" o "es Spanish".
+        value = value.split()[0] if value.split() else value
+
+        if re.fullmatch(r"[a-z]{2,3}([+_][A-Za-z0-9_-]+)?", value):
+            clean_layouts.append(value.replace("_", "+"))
+
+    clean_variants = []
+
+    for value in variants:
+        value = value.strip()
+        value = value.split()[0] if value.split() else value
+
+        if re.fullmatch(r"[A-Za-z0-9_-]*", value):
+            clean_variants.append(value)
+
+    while len(clean_variants) < len(clean_layouts):
+        clean_variants.append("")
+
+    for layout, variant in zip(clean_layouts, clean_variants):
+        if "+" in layout:
+            source_id = layout
+        else:
+            source_id = uok_source_id_from_layout_variant(layout, variant)
+
+        if source_id:
+            sources.append(("xkb", source_id))
+
+    return uok_unique_sources(sources)
+
+
+def uok_parse_xkb_plugin_rc_sources():
+    sources = []
+
+    for file in uok_xkb_plugin_rc_files():
+        sources.extend(uok_parse_xkb_plugin_rc_file(file))
+
+    return uok_unique_sources(sources)
+
+
+def uok_parse_gnome_sources():
+    try:
+        raw = sh("gsettings get org.gnome.desktop.input-sources sources")
+        return ast.literal_eval(raw)
+    except Exception:
+        return []
+
+
+def get_sources():
+    if uok_is_xfce():
+        sources = []
+
+        # Prioridad: lo que muestra el propio menú nativo de XFCE.
+        sources.extend(uok_parse_xkb_plugin_rc_sources())
+
+        # Después, la configuración de teclado XFCE.
+        sources.extend(uok_parse_xfce_keyboard_sources())
+
+        # Finalmente, el XKB activo real.
+        sources.extend(uok_parse_setxkbmap_sources())
+
+        return uok_unique_sources(sources)
+
+    return uok_parse_gnome_sources()
+
+
+def aplicar_gnome_source_sync(index):
+    if uok_is_xfce():
+        return True
+
+    result = run_menu_cmd([
+        "gsettings",
+        "set",
+        "org.gnome.desktop.input-sources",
+        "current",
+        str(index),
+    ])
+
+    if result.returncode != 0:
+        show_error("UrOwnKeyboard - GNOME", command_error(result, "No se pudo cambiar la fuente GNOME."))
+        return False
+
+    return True
+
+
+def activar_gnome_source(index, source_type, source_id):
+    label = source_label(source_type, source_id)
+
+    if not aplicar_keyd_off_sync():
+        return
+
+    if not aplicar_gnome_source_sync(index):
+        return
+
+    if not aplicar_xkb_source_sync(source_type, source_id):
+        return
+
+    ok, msg = verify_gnome_source_applied(source_type, source_id)
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", msg)
+        return
+
+    current = {
+        "type": "gnome-source",
+        "name": label,
+        "source_type": source_type,
+        "source_id": source_id,
+        "desktop": "xfce" if uok_is_xfce() else "gnome" if uok_is_gnome() else "xkb",
+        "keyd_conf": None,
+    }
+
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
+    )
+
+    notify("Keyboard", label + " activated")
+
+
+def get_gnome_current_source():
+    if uok_is_xfce():
+        sources = get_sources()
+        if not sources:
+            return None
+
+        source_type, source_id = sources[0]
+
+        return {
+            "index": 0,
+            "source_type": source_type,
+            "source_id": source_id,
+            "name": source_label(source_type, source_id),
+        }
+
+    sources = get_sources()
+
+    if not sources:
+        return None
+
+    try:
+        current_raw = sh("gsettings get org.gnome.desktop.input-sources current")
+        current = int(str(current_raw).replace("uint32", "").strip())
+    except Exception:
+        current = 0
+
+    if current < 0 or current >= len(sources):
+        current = 0
+
+    source = sources[current]
+
+    if len(source) != 2:
+        return None
+
+    source_type, source_id = source
+
+    return {
+        "index": current,
+        "source_type": source_type,
+        "source_id": source_id,
+        "name": source_label(source_type, source_id),
+    }
+
+
+def uok_xfce_panel_array(prop):
+    result = run_menu_cmd(["xfconf-query", "-c", "xfce4-panel", "-p", prop])
+    if result.returncode != 0:
+        return []
+
+    values = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        m = re.search(r"(-?\d+)\s*$", line)
+        if m:
+            values.append(int(m.group(1)))
+
+    return values
+
+
+def uok_xfce_set_panel_array(prop, values):
+    cmd = [
+        "xfconf-query",
+        "-c", "xfce4-panel",
+        "-p", prop,
+        "--force-array",
+    ]
+
+    for value in values:
+        cmd.extend(["-t", "int", "-s", str(value)])
+
+    result = run_menu_cmd(cmd)
+    return result.returncode == 0
+
+
+def ocultar_menu_xfce():
+    if not uok_is_xfce():
+        return
+
+    plugin_ids = set(uok_xkb_plugin_ids_from_rc())
+
+    # También detecta plugin xkb si xfconf lo declara directamente.
+    for prop in uok_xfconf_list("xfce4-panel"):
+        m = re.fullmatch(r"/plugins/plugin-(\d+)", prop)
+        if not m:
+            continue
+
+        plugin_id = int(m.group(1))
+        name = uok_xfconf_get("xfce4-panel", prop).lower()
+
+        if "xkb" in name or "keyboard-layout" in name or "keyboard layouts" in name:
+            plugin_ids.add(plugin_id)
+
+    if not plugin_ids:
+        return
+
+    changed = False
+
+    for prop in uok_xfconf_list("xfce4-panel"):
+        if not re.fullmatch(r"/panels/panel-\d+/plugin-ids", prop):
+            continue
+
+        current = uok_xfce_panel_array(prop)
+        if not current:
+            continue
+
+        new_values = [x for x in current if x not in plugin_ids]
+
+        if new_values != current:
+            if uok_xfce_set_panel_array(prop, new_values):
+                changed = True
+
+    if changed:
+        run_menu_cmd(["xfce4-panel", "-r"])
+        notify("UrOwnKeyboard", "XFCE keyboard layout indicator hidden")
+
+
+# --------------------------------------------------------------------
+# UOK XFCE compatibility override v5
+# --------------------------------------------------------------------
+# GNOME:
+#   - conserva gsettings org.gnome.desktop.input-sources.
+#
+# XFCE:
+#   - muestra en UOK la unión de:
+#       1. XFCE keyboard-layout
+#       2. setxkbmap activo
+#       3. GNOME/IBus input-sources, si existen
+#   - oculta del systray los indicadores nativos de IBus:
+#       ibus-ui-gtk3
+#       panel ibus
+#
+# Esto no desinstala nada y no cambia GNOME.
+
+def uok_v5_desktop_name():
+    return ":".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+    ]).lower()
+
+
+def uok_v5_is_xfce():
+    return "xfce" in uok_v5_desktop_name()
+
+
+def uok_v5_is_gnome():
+    return "gnome" in uok_v5_desktop_name()
+
+
+def uok_v5_run(cmd):
+    try:
+        return subprocess.run(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=menu_env(),
+        )
+    except Exception as exc:
+        return subprocess.CompletedProcess(cmd, 1, "", str(exc))
+
+
+def uok_v5_split_nonempty(value):
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
+
+
+def uok_v5_split_keep_empty(value):
+    return [x.strip() for x in (value or "").split(",")]
+
+
+def uok_v5_source_id(layout, variant=""):
+    layout = (layout or "").strip()
+    variant = (variant or "").strip()
+
+    if not layout:
+        return ""
+
+    return f"{layout}+{variant}" if variant else layout
+
+
+def uok_v5_unique_sources(sources):
+    out = []
+    seen = set()
+
+    for item in sources:
+        if len(item) != 2:
+            continue
+
+        source_type, source_id = item
+        source_type = (source_type or "").strip()
+        source_id = (source_id or "").strip()
+
+        if source_type != "xkb" or not source_id:
+            continue
+
+        key = (source_type, source_id)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        out.append(key)
+
+    return out
+
+
+def uok_v5_gnome_sources():
+    try:
+        raw = sh("gsettings get org.gnome.desktop.input-sources sources")
+        parsed = ast.literal_eval(raw)
+    except Exception:
+        return []
+
+    return uok_v5_unique_sources([
+        item for item in parsed
+        if len(item) == 2 and item[0] == "xkb"
+    ])
+
+
+def uok_v5_xfconf_get(channel, prop):
+    result = uok_v5_run(["xfconf-query", "-c", channel, "-p", prop])
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def uok_v5_xfconf_list(channel):
+    result = uok_v5_run(["xfconf-query", "-c", channel, "-l"])
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def uok_v5_sources_from_keyboard_layout():
+    layouts = uok_v5_split_nonempty(
+        uok_v5_xfconf_get("keyboard-layout", "/Default/XkbLayout")
+    )
+    variants = uok_v5_split_keep_empty(
+        uok_v5_xfconf_get("keyboard-layout", "/Default/XkbVariant")
+    )
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    out = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_v5_source_id(layout, variant)
+        if source_id:
+            out.append(("xkb", source_id))
+
+    return uok_v5_unique_sources(out)
+
+
+def uok_v5_sources_from_setxkbmap():
+    result = uok_v5_run(["setxkbmap", "-query"])
+    if result.returncode != 0:
+        return []
+
+    layouts = []
+    variants = []
+
+    for line in result.stdout.splitlines():
+        clean = line.strip()
+
+        if clean.startswith("layout:"):
+            layouts = uok_v5_split_nonempty(clean.split(":", 1)[1].strip())
+        elif clean.startswith("variant:"):
+            variants = uok_v5_split_keep_empty(clean.split(":", 1)[1].strip())
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    out = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_v5_source_id(layout, variant)
+        if source_id:
+            out.append(("xkb", source_id))
+
+    return uok_v5_unique_sources(out)
+
+
+def get_sources():
+    if uok_v5_is_xfce():
+        sources = []
+        sources.extend(uok_v5_sources_from_keyboard_layout())
+        sources.extend(uok_v5_sources_from_setxkbmap())
+        sources.extend(uok_v5_gnome_sources())
+        return uok_v5_unique_sources(sources)
+
+    return uok_v5_gnome_sources()
+
+
+def aplicar_gnome_source_sync(index):
+    if uok_v5_is_xfce():
+        return True
+
+    result = run_menu_cmd([
+        "gsettings",
+        "set",
+        "org.gnome.desktop.input-sources",
+        "current",
+        str(index),
+    ])
+
+    if result.returncode != 0:
+        show_error("UrOwnKeyboard - GNOME", command_error(result, "No se pudo cambiar la fuente GNOME."))
+        return False
+
+    return True
+
+
+def activar_gnome_source(index, source_type, source_id):
+    label = source_label(source_type, source_id)
+
+    if not aplicar_keyd_off_sync():
+        return
+
+    if not aplicar_gnome_source_sync(index):
+        return
+
+    if not aplicar_xkb_source_sync(source_type, source_id):
+        return
+
+    ok, msg = verify_gnome_source_applied(source_type, source_id)
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", msg)
+        return
+
+    current = {
+        "type": "gnome-source",
+        "name": label,
+        "source_type": source_type,
+        "source_id": source_id,
+        "desktop": "xfce" if uok_v5_is_xfce() else "gnome" if uok_v5_is_gnome() else "xkb",
+        "keyd_conf": None,
+    }
+
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
+    )
+
+    notify("Keyboard", label + " activated")
+
+
+def get_gnome_current_source():
+    sources = get_sources()
+
+    if not sources:
+        return None
+
+    if uok_v5_is_xfce():
+        source_type, source_id = sources[0]
+
+        return {
+            "index": 0,
+            "source_type": source_type,
+            "source_id": source_id,
+            "name": source_label(source_type, source_id),
+        }
+
+    try:
+        current_raw = sh("gsettings get org.gnome.desktop.input-sources current")
+        current = int(str(current_raw).replace("uint32", "").strip())
+    except Exception:
+        current = 0
+
+    if current < 0 or current >= len(sources):
+        current = 0
+
+    source_type, source_id = sources[current]
+
+    return {
+        "index": current,
+        "source_type": source_type,
+        "source_id": source_id,
+        "name": source_label(source_type, source_id),
+    }
+
+
+def uok_v5_xfconf_array_values(channel, prop):
+    result = uok_v5_run(["xfconf-query", "-c", channel, "-p", prop])
+    if result.returncode != 0:
+        return []
+
+    values = []
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+
+        if not line:
+            continue
+
+        if ":" in line:
+            line = line.split(":", 1)[1].strip()
+
+        if line.startswith("El valor es un vector"):
+            continue
+
+        for part in line.split(","):
+            part = part.strip()
+            if part:
+                values.append(part)
+
+    return values
+
+
+def uok_v5_set_xfconf_string_array(channel, prop, values):
+    values = [v for v in values if v]
+
+    if not values:
+        return False
+
+    cmd = [
+        "xfconf-query",
+        "-c", channel,
+        "-p", prop,
+        "--create",
+        "--force-array",
+    ]
+
+    for value in values:
+        cmd.extend(["-t", "string", "-s", value])
+
+    result = uok_v5_run(cmd)
+    return result.returncode == 0
+
+
+def uok_v5_systray_plugin_ids():
+    ids = []
+
+    for prop in uok_v5_xfconf_list("xfce4-panel"):
+        m = re.fullmatch(r"/plugins/plugin-(\d+)", prop)
+        if not m:
+            continue
+
+        plugin_id = m.group(1)
+        name = uok_v5_xfconf_get("xfce4-panel", prop).strip().lower()
+
+        if name in {"systray", "statusnotifier", "notification-plugin"}:
+            ids.append(plugin_id)
+
+    return ids
+
+
+def ocultar_menu_xfce():
+    if not uok_v5_is_xfce():
+        return
+
+    # En esta sesión el indicador nativo aparece como legacy systray item:
+    # ibus-ui-gtk3 / panel ibus.
+    native_items = [
+        "ibus-ui-gtk3",
+        "panel ibus",
+        "indicator-keyboard",
+        "indicator-keyboard-service",
+    ]
+
+    changed = False
+
+    for plugin_id in uok_v5_systray_plugin_ids():
+        for prop_name in ["hidden-legacy-items", "hidden-items"]:
+            prop = f"/plugins/plugin-{plugin_id}/{prop_name}"
+            current = uok_v5_xfconf_array_values("xfce4-panel", prop)
+
+            merged = []
+            seen = set()
+
+            for item in current + native_items:
+                if item not in seen:
+                    seen.add(item)
+                    merged.append(item)
+
+            if merged != current:
+                if uok_v5_set_xfconf_string_array("xfce4-panel", prop, merged):
+                    changed = True
+
+    if changed:
+        uok_v5_run(["xfce4-panel", "-r"])
+        notify("UrOwnKeyboard", "XFCE native keyboard indicator hidden")
+
+
+# --------------------------------------------------------------------
+# UOK XFCE compatibility override v6: read IBus keyboard sources
+# --------------------------------------------------------------------
+# GNOME queda igual.
+# XFCE muestra la unión de:
+# - XFCE keyboard-layout
+# - setxkbmap
+# - GNOME input-sources, si existen
+# - IBus preload-engines / engines-order
+#
+# Esto cubre el caso en que el menú nativo ocultado mostraba German/Alemán
+# desde IBus o indicator-keyboard.
+
+def uok_v6_desktop_name():
+    return ":".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+    ]).lower()
+
+
+def uok_v6_is_xfce():
+    return "xfce" in uok_v6_desktop_name()
+
+
+def uok_v6_is_gnome():
+    return "gnome" in uok_v6_desktop_name()
+
+
+def uok_v6_run(cmd):
+    try:
+        return subprocess.run(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=menu_env(),
+        )
+    except Exception as exc:
+        return subprocess.CompletedProcess(cmd, 1, "", str(exc))
+
+
+def uok_v6_split_nonempty(value):
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
+
+
+def uok_v6_split_keep_empty(value):
+    return [x.strip() for x in (value or "").split(",")]
+
+
+def uok_v6_source_id(layout, variant=""):
+    layout = (layout or "").strip()
+    variant = (variant or "").strip()
+
+    if not layout:
+        return ""
+
+    return f"{layout}+{variant}" if variant else layout
+
+
+def uok_v6_unique_sources(sources):
+    out = []
+    seen = set()
+
+    for item in sources:
+        if len(item) != 2:
+            continue
+
+        source_type, source_id = item
+        source_type = (source_type or "").strip()
+        source_id = (source_id or "").strip()
+
+        if source_type != "xkb" or not source_id:
+            continue
+
+        key = (source_type, source_id)
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        out.append(key)
+
+    return out
+
+
+def uok_v6_gnome_sources():
+    try:
+        raw = sh("gsettings get org.gnome.desktop.input-sources sources")
+        parsed = ast.literal_eval(raw)
+    except Exception:
+        return []
+
+    return uok_v6_unique_sources([
+        item for item in parsed
+        if len(item) == 2 and item[0] == "xkb"
+    ])
+
+
+def uok_v6_xfconf_get(channel, prop):
+    result = uok_v6_run(["xfconf-query", "-c", channel, "-p", prop])
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def uok_v6_sources_from_keyboard_layout():
+    layouts = uok_v6_split_nonempty(
+        uok_v6_xfconf_get("keyboard-layout", "/Default/XkbLayout")
+    )
+    variants = uok_v6_split_keep_empty(
+        uok_v6_xfconf_get("keyboard-layout", "/Default/XkbVariant")
+    )
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    out = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_v6_source_id(layout, variant)
+        if source_id:
+            out.append(("xkb", source_id))
+
+    return uok_v6_unique_sources(out)
+
+
+def uok_v6_sources_from_setxkbmap():
+    result = uok_v6_run(["setxkbmap", "-query"])
+    if result.returncode != 0:
+        return []
+
+    layouts = []
+    variants = []
+
+    for line in result.stdout.splitlines():
+        clean = line.strip()
+
+        if clean.startswith("layout:"):
+            layouts = uok_v6_split_nonempty(clean.split(":", 1)[1].strip())
+        elif clean.startswith("variant:"):
+            variants = uok_v6_split_keep_empty(clean.split(":", 1)[1].strip())
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    out = []
+
+    for layout, variant in zip(layouts, variants):
+        source_id = uok_v6_source_id(layout, variant)
+        if source_id:
+            out.append(("xkb", source_id))
+
+    return uok_v6_unique_sources(out)
+
+
+def uok_v6_ibus_engine_to_source_id(engine):
+    engine = (engine or "").strip()
+
+    # Ejemplos:
+    # xkb:es::spa
+    # xkb:de::ger
+    # xkb:us::eng
+    # xkb:us:intl:eng
+    if not engine.startswith("xkb:"):
+        return ""
+
+    parts = engine.split(":")
+    if len(parts) < 2:
+        return ""
+
+    layout = parts[1].strip()
+    variant = ""
+
+    if len(parts) >= 3:
+        variant = parts[2].strip()
+
+    if not layout:
+        return ""
+
+    return uok_v6_source_id(layout, variant)
+
+
+def uok_v6_sources_from_ibus():
+    out = []
+
+    keys = [
+        "preload-engines",
+        "engines-order",
+    ]
+
+    for key in keys:
+        result = uok_v6_run([
+            "gsettings",
+            "get",
+            "org.freedesktop.ibus.general",
+            key,
+        ])
+
+        if result.returncode != 0:
+            continue
+
+        try:
+            engines = ast.literal_eval(result.stdout.strip())
+        except Exception:
+            engines = re.findall(r"'([^']+)'", result.stdout)
+
+        for engine in engines:
+            source_id = uok_v6_ibus_engine_to_source_id(engine)
+            if source_id:
+                out.append(("xkb", source_id))
+
+    return uok_v6_unique_sources(out)
+
+
+def get_sources():
+    if uok_v6_is_xfce():
+        sources = []
+        sources.extend(uok_v6_sources_from_keyboard_layout())
+        sources.extend(uok_v6_sources_from_setxkbmap())
+        sources.extend(uok_v6_gnome_sources())
+        sources.extend(uok_v6_sources_from_ibus())
+        return uok_v6_unique_sources(sources)
+
+    return uok_v6_gnome_sources()
+
+
+def aplicar_gnome_source_sync(index):
+    if uok_v6_is_xfce():
+        return True
+
+    result = run_menu_cmd([
+        "gsettings",
+        "set",
+        "org.gnome.desktop.input-sources",
+        "current",
+        str(index),
+    ])
+
+    if result.returncode != 0:
+        show_error("UrOwnKeyboard - GNOME", command_error(result, "No se pudo cambiar la fuente GNOME."))
+        return False
+
+    return True
+
+
+def activar_gnome_source(index, source_type, source_id):
+    label = source_label(source_type, source_id)
+
+    if not aplicar_keyd_off_sync():
+        return
+
+    if not aplicar_gnome_source_sync(index):
+        return
+
+    if not aplicar_xkb_source_sync(source_type, source_id):
+        return
+
+    ok, msg = verify_gnome_source_applied(source_type, source_id)
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", msg)
+        return
+
+    current = {
+        "type": "gnome-source",
+        "name": label,
+        "source_type": source_type,
+        "source_id": source_id,
+        "desktop": "xfce" if uok_v6_is_xfce() else "gnome" if uok_v6_is_gnome() else "xkb",
+        "keyd_conf": None,
+    }
+
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
+    )
+
+    notify("Keyboard", label + " activated")
+
+
+def get_gnome_current_source():
+    sources = get_sources()
+
+    if not sources:
+        return None
+
+    if uok_v6_is_xfce():
+        source_type, source_id = sources[0]
+
+        return {
+            "index": 0,
+            "source_type": source_type,
+            "source_id": source_id,
+            "name": source_label(source_type, source_id),
+        }
+
+    try:
+        current_raw = sh("gsettings get org.gnome.desktop.input-sources current")
+        current = int(str(current_raw).replace("uint32", "").strip())
+    except Exception:
+        current = 0
+
+    if current < 0 or current >= len(sources):
+        current = 0
+
+    source_type, source_id = sources[current]
+
+    return {
+        "index": current,
+        "source_type": source_type,
+        "source_id": source_id,
+        "name": source_label(source_type, source_id),
+    }
+
+
+# --------------------------------------------------------------------
+# UOK desktop compatibility override: Add from settings
+# --------------------------------------------------------------------
+# GNOME:
+#   abre gnome-control-center keyboard.
+#
+# XFCE:
+#   abre xfce4-keyboard-settings.
+#
+# Cinnamon:
+#   abre cinnamon-settings keyboard.
+#
+# KDE Plasma:
+#   abre systemsettings kcm_keyboard.
+#
+# Fallback:
+#   prueba todos sin romper el comportamiento anterior.
+
+def uok_settings_desktop_name():
+    return ":".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+    ]).lower()
+
+
+def uok_settings_command_candidates():
+    desktop = uok_settings_desktop_name()
+
+    if "xfce" in desktop:
+        return [
+            ["xfce4-keyboard-settings"],
+            ["xfce4-settings-manager"],
+        ]
+
+    if "gnome" in desktop or "ubuntu" in desktop:
+        return [
+            ["gnome-control-center", "keyboard"],
+            ["gnome-control-center", "region"],
+        ]
+
+    if "cinnamon" in desktop:
+        return [
+            ["cinnamon-settings", "keyboard"],
+            ["cinnamon-settings", "region"],
+        ]
+
+    if "kde" in desktop or "plasma" in desktop:
+        return [
+            ["systemsettings", "kcm_keyboard"],
+            ["systemsettings5", "kcm_keyboard"],
+            ["kcmshell6", "kcm_keyboard"],
+            ["kcmshell5", "kcm_keyboard"],
+        ]
+
+    return [
+        ["gnome-control-center", "keyboard"],
+        ["xfce4-keyboard-settings"],
+        ["cinnamon-settings", "keyboard"],
+        ["systemsettings", "kcm_keyboard"],
+        ["systemsettings5", "kcm_keyboard"],
+        ["kcmshell6", "kcm_keyboard"],
+        ["kcmshell5", "kcm_keyboard"],
+    ]
+
+
+def abrir_ajustes_teclado(_item=None):
+    for cmd in uok_settings_command_candidates():
+        try:
+            subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+
+    notify(
+        "UrOwnKeyboard",
+        "No se pudo abrir la configuración de teclado del sistema."
+    )
+
+
+# --------------------------------------------------------------------
+# UOK non-blocking errors + non-fatal keyd off override v7
+# --------------------------------------------------------------------
+# Aplica a todos los escritorios.
+#
+# Objetivo:
+# - Los errores gráficos no deben bloquear el uso del sistema.
+# - Si keyd falla al apagarse, no debe impedir cambiar a un teclado normal.
+# - Se intenta aplicar XKB/GNOME/XFCE aunque keyd dé error.
+# - keyd activo se convierte en aviso, no en bloqueo.
+
+def uok_v7_nonblocking_dialog(kind, title, msg):
+    icon = "--error" if kind == "error" else "--warning"
+
+    try:
+        subprocess.Popen(
+            [
+                "zenity",
+                icon,
+                "--title", str(title),
+                "--text", str(msg),
+                "--no-wrap",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=menu_env(),
+        )
+        return
+    except Exception:
+        pass
+
+    try:
+        subprocess.Popen(
+            [
+                "notify-send",
+                str(title),
+                str(msg),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=menu_env(),
+        )
+    except Exception:
+        pass
+
+
+def show_error(title, msg):
+    uok_v7_nonblocking_dialog("error", title, msg)
+
+
+def show_warning(title, msg):
+    uok_v7_nonblocking_dialog("warning", title, msg)
+
+
+def aplicar_keyd_off_sync():
+    result = run_menu_cmd(["sudo", "-n", str(KEYD_HELPER), "--off"])
+
+    if result.returncode != 0:
+        msg = command_error(
+            result,
+            "No se pudo desactivar keyd. Se continuará aplicando el teclado XKB normal."
+        )
+
+        show_warning(
+            "UrOwnKeyboard - keyd",
+            msg + "\n\nSe continuará aplicando la distribución normal del sistema."
+        )
+
+        # Importante:
+        # Antes devolvía False y bloqueaba el cambio al teclado por defecto.
+        # Ahora no bloquea: XKB/GNOME/XFCE deben aplicarse igualmente.
+        return True
+
+    return True
+
+
+def verify_gnome_source_applied(source_type, source_id):
+    if source_type != "xkb":
+        return True, ""
+
+    got = raw_xkb_layout()
+    expected = expected_source_spec(source_id)
+
+    if got != expected:
+        return False, (
+            "XKB no cambió al layout esperado. "
+            f"Esperado: {expected}. Actual: {got or 'desconocido'}."
+        )
+
+    if keyd_is_active():
+        show_warning(
+            "UrOwnKeyboard - keyd",
+            "La distribución XKB se ha cambiado, pero keyd sigue activo. "
+            "Si notas remapeos antiguos, reinicia keyd o revisa su configuración."
+        )
+
+    return True, ""
+
+
+def activar_gnome_source(index, source_type, source_id):
+    label = source_label(source_type, source_id)
+
+    # No bloquea aunque keyd falle.
+    aplicar_keyd_off_sync()
+
+    if not aplicar_gnome_source_sync(index):
+        return
+
+    if not aplicar_xkb_source_sync(source_type, source_id):
+        return
+
+    ok, msg = verify_gnome_source_applied(source_type, source_id)
+    if not ok:
+        show_warning("UrOwnKeyboard - verificación", msg)
+        # No hacemos return duro: el usuario ya intentó cambiar de teclado
+        # y el error no debe dejar el menú bloqueado.
+
+    current = {
+        "type": "gnome-source",
+        "name": label,
+        "source_type": source_type,
+        "source_id": source_id,
+        "desktop": (
+            "xfce"
+            if "xfce" in ":".join([
+                os.environ.get("XDG_CURRENT_DESKTOP", ""),
+                os.environ.get("DESKTOP_SESSION", ""),
+            ]).lower()
+            else "gnome"
+            if "gnome" in ":".join([
+                os.environ.get("XDG_CURRENT_DESKTOP", ""),
+                os.environ.get("DESKTOP_SESSION", ""),
+            ]).lower()
+            else "xkb"
+        ),
+        "keyd_conf": None,
+    }
+
+    CURRENT_PROFILE.write_text(
+        json.dumps(current, indent=2, ensure_ascii=False)
+    )
+
+    notify("Keyboard", label + " activated")
+
+
+def run_checked_for_menu(cmd, title):
+    result = run_menu_cmd(cmd)
+
+    if result.returncode != 0:
+        show_error(title, command_error(result))
+        return False
+
+    return True
+
+
+# --------------------------------------------------------------------
+# UOK non-blocking error handling + optional keyd activation
+# --------------------------------------------------------------------
+# Los errores no abren diálogos modales.
+# Se registran en log y se muestran como notificaciones.
+# keyd no bloquea la aplicación de XKB.
+
+def uok_nb_log_path():
+    return HOME / ".cache" / "urownkeyboard" / "indicator.log"
+
+
+def uok_nb_log(title, msg):
+    try:
+        path = uok_nb_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write("\n---- UOK warning ----\n")
+            fh.write(str(title).strip() + "\n")
+            fh.write(str(msg).strip() + "\n")
+    except Exception:
+        pass
+
+
+def show_error(title, msg):
+    title = str(title or "UrOwnKeyboard")
+    msg = str(msg or "Unknown error")
+
+    uok_nb_log(title, msg)
+
+    # Notificación no bloqueante. No detiene el indicador ni captura el foco.
+    try:
+        subprocess.Popen(
+            [
+                "notify-send",
+                "--app-name=UrOwnKeyboard",
+                "--icon=input-keyboard",
+                title,
+                msg,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=menu_env(),
+            start_new_session=True,
+        )
+        return
+    except Exception:
+        pass
+
+    # Fallback también no bloqueante si notify-send no existe.
+    try:
+        subprocess.Popen(
+            [
+                "zenity",
+                "--warning",
+                "--title", title,
+                "--text", msg,
+                "--no-wrap",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=menu_env(),
+            start_new_session=True,
+        )
+    except Exception:
+        pass
+
+
+def aplicar_keyd_off_sync():
+    result = run_menu_cmd(["sudo", "-n", str(KEYD_HELPER), "--off"])
+
+    if result.returncode != 0:
+        show_error(
+            "UrOwnKeyboard - keyd",
+            "No se pudo desactivar keyd. Se continuará aplicando XKB.\n\n"
+            + command_error(result, "No se pudo desactivar keyd.")
+        )
+        return True
+
+    return True
+
+
+def activar_profile(profile):
+    profile_id = profile.get("id")
+
+    if not profile_id:
+        show_error("UrOwnKeyboard", "Invalid imported configuration.")
+        return
+
+    uok_bin = UOK_BIN if UOK_BIN.exists() else Path("uok")
+
+    result = run_menu_cmd([str(uok_bin), "activate", profile_id])
+
+    combined = "\n".join(
+        x.strip()
+        for x in [result.stdout, result.stderr]
+        if x and x.strip()
+    )
+
+    if result.returncode != 0:
+        show_error(
+            "UrOwnKeyboard",
+            combined or "Could not activate configuration.",
+        )
+        return
+
+    # Si uok pudo activar XKB pero avisó de keyd, mostramos notificación no bloqueante.
+    if "WARNING:" in combined or "keyd" in result.stderr.lower():
+        show_error("UrOwnKeyboard - keyd", combined)
+
+    ok, msg = verify_uok_profile_applied(profile_id)
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", msg)
+        return
+
+    notify("Keyboard", result.stdout.strip() or f"{profile.get('name', profile_id)} activated")
+
+
+# --------------------------------------------------------------------
+# UOK keyd diagnostics override
+# --------------------------------------------------------------------
+# Añade diagnóstico claro cuando un perfil no tiene keyd_conf o el archivo
+# asociado no existe. No bloquea la aplicación del XKB.
+
+def uok_keyd_profile_diagnostic(profile):
+    if not profile:
+        return "Perfil vacío."
+
+    keyd_conf = profile.get("keyd_conf")
+
+    if not keyd_conf:
+        return (
+            "Este perfil no tiene archivo keyd_conf asociado.\n"
+            "Eso significa que el editor visual no importó ningún keyd.conf para esta configuración.\n\n"
+            "Vuelve a abrir el editor visual, añade al menos un atajo keyd o activa el bloqueo global de atajos, "
+            "y guarda/importa de nuevo."
+        )
+
+    path = Path(keyd_conf).expanduser()
+
+    if not path.exists():
+        return (
+            "El perfil tiene keyd_conf, pero el archivo no existe:\n"
+            f"{path}"
+        )
+
+    try:
+        content = path.read_text(encoding="utf-8", errors="ignore").strip()
+    except Exception as exc:
+        return f"No se pudo leer el keyd.conf asociado:\n{path}\n\n{exc}"
+
+    if not content:
+        return f"El keyd.conf asociado existe, pero está vacío:\n{path}"
+
+    return ""
+
+
+def activar_profile(profile):
+    profile_id = profile.get("id")
+
+    if not profile_id:
+        show_error("UrOwnKeyboard", "Invalid imported configuration.")
+        return
+
+    diagnostic = uok_keyd_profile_diagnostic(profile)
+
+    uok_bin = UOK_BIN if UOK_BIN.exists() else Path("uok")
+    result = run_menu_cmd([str(uok_bin), "activate", profile_id])
+
+    combined = "\n".join(
+        x.strip()
+        for x in [result.stdout, result.stderr]
+        if x and x.strip()
+    )
+
+    if diagnostic:
+        show_error("UrOwnKeyboard - keyd", diagnostic)
+
+    if result.returncode != 0:
+        show_error(
+            "UrOwnKeyboard",
+            combined or "Could not activate configuration.",
+        )
+        return
+
+    if "WARNING:" in combined or "keyd" in result.stderr.lower():
+        show_error("UrOwnKeyboard - keyd", combined)
+
+    ok, msg = verify_uok_profile_applied(profile_id)
+
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", msg)
+        return
+
+    notify("Keyboard", result.stdout.strip() or f"{profile.get('name', profile_id)} activated")
+
+
+# --------------------------------------------------------------------
+# UOK final override: no modal dialogs and suppress false keyd warning
+# --------------------------------------------------------------------
+# Este bloque debe estar justo antes de sincronizar_estado_al_arrancar()
+# para que sus definiciones sean las últimas.
+
+def show_error(title, msg):
+    import subprocess as _sp
+    import os as _os
+
+    title = str(title or "UrOwnKeyboard")
+    msg = str(msg or "")
+
+    # Falso positivo: keyd puede seguir activo como daemon.
+    # Al volver a una configuración normal lo correcto es que quede neutral,
+    # no que systemctl keyd deje de estar activo.
+    suppress_parts = [
+        "La distribución XKB se ha cambiado, pero keyd sigue activo",
+        "keyd sigue activo",
+        "Si notas remapeos antiguos",
+    ]
+
+    if any(part in msg for part in suppress_parts):
+        return
+
+    try:
+        cache = HOME / ".cache" / "urownkeyboard"
+        cache.mkdir(parents=True, exist_ok=True)
+        with (cache / "indicator.log").open("a", encoding="utf-8") as fh:
+            fh.write("\n---- UOK warning ----\n")
+            fh.write(title + "\n")
+            fh.write(msg + "\n")
+    except Exception:
+        pass
+
+    # Notificación no bloqueante. Nunca Gtk.MessageDialog modal.
+    try:
+        _sp.Popen(
+            [
+                "notify-send",
+                "--app-name=UrOwnKeyboard",
+                "--icon=input-keyboard",
+                title,
+                msg,
+            ],
+            stdin=_sp.DEVNULL,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            env=globals().get("menu_env", lambda: _os.environ.copy())(),
+            start_new_session=True,
+        )
+    except Exception:
+        pass
+
+
+def verify_gnome_source_applied(source_type, source_id):
+    # keyd puede seguir activo como servicio.
+    # No se debe avisar por "systemctl is-active keyd".
+    if source_type != "xkb":
+        return True, ""
+
+    got = raw_xkb_layout()
+    expected = expected_source_spec(source_id)
+
+    if got != expected:
+        return False, f"XKB no cambió al layout esperado. Esperado: {expected}. Actual: {got or 'desconocido'}."
+
+    return True, ""
+
+ocultar_menu_xfce()
 sincronizar_estado_al_arrancar()
 indicator.set_menu(crear_menu())
 

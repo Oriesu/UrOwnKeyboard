@@ -1,90 +1,94 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
-UOK_CONF="/etc/keyd/uok.conf"
-KEYD_DIR="/etc/keyd"
+TARGET="/etc/keyd/default.conf"
+BACKUP="/etc/keyd/default.conf.uok-backup"
+NEUTRAL="$(mktemp)"
 
-TARGET_USER="${SUDO_USER:-$USER}"
-TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
-ALLOWED_DIR="$TARGET_HOME/.config/teclado-indicador/keyd"
+cleanup() {
+  rm -f "$NEUTRAL"
+}
+trap cleanup EXIT
 
-fail() {
-    echo "ERROR: $*" >&2
-    exit 1
+cat > "$NEUTRAL" <<'NEUTRAL_CONF'
+[ids]
+*
+
+[main]
+NEUTRAL_CONF
+
+fail_restore() {
+  echo "ERROR: keyd.conf could not be applied. Previous keyd configuration restored." >&2
+
+  if [ -f "$BACKUP" ]; then
+    cp "$BACKUP" "$TARGET"
+  else
+    cp "$NEUTRAL" "$TARGET"
+  fi
+
+  timeout 8s systemctl restart keyd >/dev/null 2>&1 || true
+
+  echo >&2
+  echo "=== keyd status ===" >&2
+  systemctl status keyd --no-pager >&2 || true
+
+  echo >&2
+  echo "=== keyd journal ===" >&2
+  journalctl -u keyd -n 80 --no-pager >&2 || true
+
+  exit 1
 }
 
-need_keyd() {
-    command -v keyd >/dev/null 2>&1 || fail "keyd is not installed."
+mkdir -p /etc/keyd
 
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl is-active --quiet keyd || systemctl start keyd || true
-    fi
-
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-        if [ -S /run/keyd.socket ] || [ -S /var/run/keyd.socket ]; then
-            return 0
-        fi
-        sleep 0.2
-    done
-
-    fail "Failed to connect to keyd socket. Make sure keyd.service is running."
-}
-
-reload_keyd() {
-    need_keyd
-
-    if ! keyd reload; then
-        fail "keyd reload failed."
-    fi
-}
-
-mkdir -p "$KEYD_DIR"
+if [ -f "$TARGET" ]; then
+  cp "$TARGET" "$BACKUP"
+fi
 
 if [ "${1:-}" = "--off" ]; then
-    rm -f "$UOK_CONF"
+  cp "$NEUTRAL" "$TARGET"
+else
+  SRC="${1:-}"
 
-    # Para volver a una fuente normal GNOME/XKB, keyd no debe quedarse activo.
-    # Si queda activo, puede mantener un remapeo físico antiguo.
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop keyd 2>/dev/null || true
-    else
-        pkill keyd 2>/dev/null || true
-    fi
+  if [ -z "$SRC" ]; then
+    echo "ERROR: missing keyd.conf path." >&2
+    exit 1
+  fi
 
-    exit 0
+  SRC_REAL="$(readlink -f "$SRC" 2>/dev/null || true)"
+
+  if [ -z "$SRC_REAL" ] || [ ! -f "$SRC_REAL" ]; then
+    echo "ERROR: keyd.conf does not exist: $SRC" >&2
+    exit 1
+  fi
+
+  case "$SRC_REAL" in
+    /home/*/.config/teclado-indicador/keyd/*.conf|/root/.config/teclado-indicador/keyd/*.conf)
+      ;;
+    *)
+      echo "ERROR: keyd.conf path not allowed: $SRC_REAL" >&2
+      exit 1
+      ;;
+  esac
+
+  cp "$SRC_REAL" "$TARGET"
 fi
 
-[ "$#" -eq 1 ] || fail "Usage: keyd-aplicar-conf --off | /path/to/keyd.conf"
-
-SRC="$(readlink -f "$1")"
-ALLOWED="$(readlink -f "$ALLOWED_DIR")"
-
-[ -f "$SRC" ] || fail "keyd.conf does not exist: $SRC"
-
-case "$SRC" in
-    "$ALLOWED"/*) ;;
-    *) fail "Refusing keyd.conf outside allowed directory: $ALLOWED_DIR" ;;
-esac
-
-need_keyd
-
-BACKUP=""
-if [ -f "$UOK_CONF" ]; then
-    BACKUP="$(mktemp)"
-    cp "$UOK_CONF" "$BACKUP"
+if ! timeout 8s systemctl restart keyd >/tmp/uok-keyd-systemctl.out 2>/tmp/uok-keyd-systemctl.err; then
+  cat /tmp/uok-keyd-systemctl.out >&2 2>/dev/null || true
+  cat /tmp/uok-keyd-systemctl.err >&2 2>/dev/null || true
+  fail_restore
 fi
 
-install -m 0644 "$SRC" "$UOK_CONF"
+sleep 0.3
 
-if ! keyd reload; then
-    if [ -n "$BACKUP" ] && [ -f "$BACKUP" ]; then
-        cp "$BACKUP" "$UOK_CONF"
-    else
-        rm -f "$UOK_CONF"
-    fi
-
-    keyd reload >/dev/null 2>&1 || true
-    fail "keyd.conf could not be applied. Previous keyd configuration restored."
+if ! systemctl is-active --quiet keyd; then
+  fail_restore
 fi
 
-rm -f "$BACKUP" 2>/dev/null || true
+if [ ! -S /run/keyd.socket ] && [ ! -S /var/run/keyd.socket ]; then
+  echo "ERROR: keyd socket was not created." >&2
+  fail_restore
+fi
+
+exit 0

@@ -1,7 +1,0 @@
-{
-  "uuid": "hide-input-source@teclado-indicador",
-  "name": "Hide GNOME Input Source Indicator",
-  "description": "Hides GNOME's native input source indicator.",
-  "shell-version": ["46"],
-  "version": 1
-}
