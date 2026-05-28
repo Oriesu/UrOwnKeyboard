@@ -6,97 +6,120 @@ Permite importar, crear, activar y eliminar configuraciones basadas en **XKB** y
 
 Incluye:
 
-- un núcleo portable de terminal llamado `uok`;
+- un comando de terminal llamado `uok`;
 - un indicador gráfico compatible con AppIndicator/Ayatana;
 - un editor visual de distribuciones XKB;
-- una integración específica para GNOME que oculta el menú nativo de fuentes de entrada.
-  
-## Instalación rápida
+- soporte para perfiles XKB propios;
+- soporte opcional para `keyd`;
+- integración con GNOME;
+- soporte para XFCE;
+- una extensión específica de GNOME para ocultar el indicador nativo de fuentes de entrada.
 
-Copia y pega esto en una terminal:
+---
 
-```bash
-sudo apt update
-sudo apt install -y git build-essential python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator fonts-noto-core fonts-noto-extra x11-xkb-utils fonts-noto-core fonts-noto-extra
+## Estado actual
 
-if ! command -v keyd >/dev/null 2>&1; then
-    cd /tmp
-    rm -rf keyd
-    git clone https://github.com/rvaiya/keyd.git
-    cd keyd
-    make
-    sudo make install
-    sudo systemctl enable --now keyd
-fi
+UrOwnKeyboard está orientado a escritorios Linux que usen XKB.
 
-cd "$HOME"
-rm -rf UrOwnKeyboard
-git clone https://github.com/Oriesu/UrOwnKeyboard.git
-cd UrOwnKeyboard
-chmod +x install.sh uninstall.sh uok
-./install.sh
-```
+Estado de soporte:
 
-Después de instalar, cierra sesión y vuelve a entrar para que GNOME con `Alt + F2`, estrbe `r` y pulsa `Enter`.
+| Escritorio | Estado |
+|---|---|
+| GNOME | Soportado |
+| XFCE | Soportado |
+| Cinnamon | Parcial / experimental |
+| KDE Plasma | Parcial / experimental |
+| Otros | Puede funcionar si soportan XKB y AppIndicator/Ayatana |
 
-Si el indicador nativo de GNOME sigue apareciendo, ejecuta:
+En **GNOME**, UrOwnKeyboard usa las fuentes de entrada de `gsettings`.
 
-```bash
-gnome-extensions enable hide-input-source@teclado-indicador
-```
+En **XFCE**, UrOwnKeyboard puede leer distribuciones añadidas desde la configuración de teclado de XFCE, `setxkbmap` e IBus cuando está presente.
+
+---
 
 ## Funciones
 
 - Importar distribuciones XKB desde archivos.
 - Crear distribuciones nuevas desde un editor visual.
-- Usar como base cualquier distribución del sistema, una fuente añadida en la configuración del sistema o una configuración propia de UrOwnKeyboard.
+- Usar como base una distribución del sistema, una fuente añadida desde la configuración del escritorio o una configuración propia de UrOwnKeyboard.
 - Editar teclas visualmente, incluyendo niveles normal, Shift, AltGr y AltGr+Shift.
-- Exportar la distribución editada como archivo XKB.
-- Importar directamente la distribución editada en UrOwnKeyboard.
+- Exportar una distribución editada como archivo XKB.
+- Importar directamente una distribución editada en UrOwnKeyboard.
 - Asociar opcionalmente un archivo `keyd.conf`.
 - Aplicar automáticamente XKB + keyd.
+- Volver a una distribución normal dejando `keyd` en modo neutral.
 - Listar configuraciones importadas.
 - Eliminar configuraciones importadas.
 - Mostrar la configuración activa.
-- Mostrar el `keyd.conf` activo.
+- Mostrar el `keyd.conf` asociado a la configuración activa.
 - Mostrar una vista completa de la configuración activa.
-- Usar un menú gráfico en la barra superior.
+- Usar un menú gráfico en la barra superior o panel.
 - Abrir la configuración de teclado del sistema desde el menú gráfico.
-- Ocultar el indicador nativo de teclado de GNOME.
+- Ocultar el indicador nativo de teclado en GNOME.
+- Ocultar el indicador nativo/IBus en XFCE cuando sea posible.
 - Iniciarse automáticamente al iniciar sesión.
 
-## Qué hace el instalador
+---
+
+## Instalación rápida
+
+En Ubuntu, Debian y derivadas:
+
+```bash
+cd "$HOME"
+rm -rf UrOwnKeyboard
+git clone https://github.com/Oriesu/UrOwnKeyboard.git
+cd UrOwnKeyboard
+chmod +x install.sh uninstall.sh make-release.sh uok
+./install.sh
+```
+
+El instalador instala las dependencias necesarias, copia los archivos a `~/.local/bin`, instala el helper de `keyd`, crea la regla sudoers limitada y activa el autoinicio del indicador.
+
+Después de instalar, se recomienda cerrar sesión y volver a entrar.
+
+En GNOME, si el indicador nativo sigue apareciendo, ejecuta:
+
+```bash
+gnome-extensions enable hide-input-source@teclado-indicador
+```
+
+---
+
+## Qué instala
 
 El script `install.sh`:
 
-- instala las dependencias necesarias;
+- instala dependencias GTK, AppIndicator/Ayatana, XKB, Noto y herramientas de escritorio;
+- instala o activa `keyd`;
+- crea directorios de configuración en `~/.config/teclado-indicador/`;
+- copia `uok` a `~/.local/bin/uok`;
 - copia `teclado-indicador.py` a `~/.local/bin/`;
-- copia `uok` a `~/.local/bin/`;
 - copia `uok-layout-editor.py` a `~/.local/bin/`;
-- copia los módulos del editor visual `uok_xkb_symbols.py` y `uok_xkb_sources.py` a `~/.local/bin/`;
-- instala el helper de keyd en `/usr/local/sbin/keyd-aplicar-conf`;
-- crea una regla sudoers limitada para aplicar configuraciones keyd;
-- crea la entrada de autoinicio en `~/.config/autostart/teclado-indicador.desktop`;
+- copia los módulos `uok_xkb_symbols.py` y `uok_xkb_sources.py`;
+- instala el helper `/usr/local/sbin/keyd-aplicar-conf`;
+- crea la regla sudoers `/etc/sudoers.d/teclado-indicador-keyd`;
+- crea el autoinicio `~/.config/autostart/teclado-indicador.desktop`;
 - instala la extensión local de GNOME si detecta GNOME Shell;
-- inicia el indicador gráfico al terminar.
+- inicia el indicador gráfico.
 
-Si la instalación se detiene durante la configuración de sudoers, comprueba que no haya archivos antiguos con permisos incorrectos en `/etc/sudoers.d/`.
+La regla sudoers se limita al helper de keyd:
 
-Puedes verificarlo con:
-
-```bash
-sudo visudo -c
+```text
+/usr/local/sbin/keyd-aplicar-conf
 ```
 
-La regla propia de UrOwnKeyboard se comprueba con:
+Puedes comprobarla con:
 
 ```bash
 sudo visudo -cf /etc/sudoers.d/teclado-indicador-keyd
 ```
 
+---
+
 ## Uso gráfico
 
-Después de instalar, aparecerá un nuevo indicador en la barra superior.
+Después de instalar, aparecerá un indicador de UrOwnKeyboard en la barra superior o panel.
 
 Desde el menú puedes usar:
 
@@ -110,304 +133,429 @@ Delete configuration…
 Reload list
 ```
 
-La opción **New configuration…** agrupa las formas de añadir o crear configuraciones nuevas:
+### New configuration…
 
-- **Open visual editor…** abre el editor visual de distribuciones.
+Agrupa las formas de crear o añadir configuraciones:
+
+- **Open visual editor…** abre el editor visual.
 - **Import configuration…** importa un archivo XKB existente.
-- **Add from settings…** abre directamente el apartado de teclado de la configuración del sistema para añadir distribuciones del sistema.
+- **Add from settings…** abre la configuración de teclado del escritorio actual.
 
-La interfaz del programa está en inglés para facilitar su uso en sistemas internacionales, pero este README está en español.
+`Add from settings…` se adapta al escritorio:
+
+- en GNOME abre la configuración de teclado/región de GNOME;
+- en XFCE abre `xfce4-keyboard-settings`;
+- en Cinnamon intenta abrir `cinnamon-settings keyboard`;
+- en KDE intenta abrir el módulo de teclado de System Settings.
+
+### Reload list
+
+Recarga las distribuciones mostradas en el menú.
+
+Útil si acabas de añadir una distribución desde los ajustes del sistema.
+
+---
 
 ## Editor visual
 
-El editor visual permite crear una distribución nueva partiendo de otra ya existente.
+El editor visual permite crear una distribución XKB desde una base existente.
 
-Puede abrirse desde el menú gráfico:
-
-```text
-New configuration… → Open visual editor…
-```
-
-También puede abrirse desde terminal:
+Se puede iniciar desde el menú gráfico o desde terminal:
 
 ```bash
 uok editor
 ```
 
-Alias disponibles:
+También se puede abrir directamente:
 
 ```bash
-uok open-editor
-uok visual-editor
-uok layout-editor
+~/.local/bin/uok-layout-editor.py
 ```
-
-En la barra lateral del editor aparecen tres secciones:
-
-```text
-UOK
-Added to system
-Others
-```
-
-- **UOK** muestra configuraciones propias de UrOwnKeyboard.
-- **Added to system** muestra distribuciones añadidas en la configuración del sistema.
-- **Others** muestra distribuciones disponibles en XKB.
 
 El editor permite:
 
-```text
-- buscar distribuciones;
 - elegir una distribución base;
-- editar teclas visualmente;
-- añadir teclas físicas adicionales;
-- exportar la distribución como archivo XKB;
-- importarla directamente en UrOwnKeyboard.
+- modificar símbolos de teclas;
+- editar niveles normal, Shift, AltGr y AltGr+Shift;
+- guardar la distribución como archivo XKB;
+- importar la distribución directamente en UrOwnKeyboard;
+- añadir atajos concretos de keyd.
+
+### keyd en el editor visual
+
+El editor visual sólo debe generar reglas concretas de keyd.
+
+La opción antigua de **bloqueo global de todos los atajos** fue eliminada porque generaba archivos `keyd.conf` enormes con muchas secciones y muchos `noop`. Ese formato podía hacer fallar `keyd` por superar su límite interno de secciones.
+
+Formato recomendado:
+
+```ini
+[ids]
+*
+
+[main]
+leftcontrol = layer(ctrlq)
+rightcontrol = layer(ctrlq)
+leftalt = layer(altq)
+
+[ctrlq]
+c = C-c
+v = C-v
+
+[altq]
+tab = A-tab
 ```
 
-Algunas distribuciones usan símbolos Unicode poco comunes. Para mejorar su visualización se recomienda tener instaladas las fuentes Noto:
+No se recomienda generar secciones masivas como:
 
-```bash
-sudo apt install -y fonts-noto-core fonts-noto-extra
+```ini
+[ctrl_alt_shift_meta_altgrq]
+a = noop
+b = noop
+c = noop
 ```
+
+---
 
 ## Uso por terminal
 
-UrOwnKeyboard instala el comando `uok`.
-
-Ver ayuda general:
+### Ver ayuda
 
 ```bash
 uok --help
 ```
 
-Ver ayuda de un comando concreto:
-
-```bash
-uok import --help
-uok activate --help
-uok delete --help
-uok editor --help
-```
-
-Listar configuraciones:
+### Listar configuraciones
 
 ```bash
 uok list
 ```
 
-Importar una configuración sólo con XKB:
+### Importar una distribución XKB
 
 ```bash
 uok import --name "Mi teclado" --xkb ./mi_teclado
 ```
 
-Importar una configuración con XKB + keyd:
+### Importar una distribución XKB con keyd
 
 ```bash
-uok import --name "Mi teclado" --xkb ./mi_teclado --keyd ./mi_teclado.keyd.conf
+uok import \
+  --name "Mi teclado" \
+  --xkb ./mi_teclado \
+  --keyd ./mi_teclado.keyd.conf
 ```
 
-Abrir el editor visual:
-
-```bash
-uok editor
-```
-
-Activar una configuración:
+### Activar una configuración
 
 ```bash
 uok activate mi_teclado
 ```
 
-Eliminar una configuración:
-
-```bash
-uok delete mi_teclado
-```
-
-Ver la configuración activa:
+### Ver la configuración activa
 
 ```bash
 uok current
 ```
 
-Ver el `keyd.conf` asociado a la configuración activa:
+### Ver el keyd activo
 
 ```bash
-uok show-keyd
+uok current-keyd
 ```
 
-## Importar una configuración desde el menú
+### Ver la configuración completa
 
-Selecciona:
+```bash
+uok show
+```
+
+### Eliminar una configuración
+
+```bash
+uok delete mi_teclado
+```
+
+---
+
+## Ejemplo: importar Dvorak para programación en español
+
+Si tienes una carpeta con:
 
 ```text
-New configuration… → Import configuration…
+Dvorak-para-programacion-en-espanol-main/
+├── esprog
+├── esprog.keyd.conf
+└── README.md
 ```
 
-El programa pedirá:
+puedes importarla con:
+
+```bash
+uok import \
+  --name "Dvorak esprog" \
+  --xkb "$HOME/Descargas/Dvorak-para-programacion-en-espanol-main/esprog" \
+  --keyd "$HOME/Descargas/Dvorak-para-programacion-en-espanol-main/esprog.keyd.conf"
+```
+
+Luego activa el perfil:
+
+```bash
+uok list
+uok activate dvorak_esprog
+```
+
+Si el ID generado es distinto, usa el ID exacto mostrado por `uok list`.
+
+---
+
+## Funcionamiento de keyd
+
+UrOwnKeyboard trata XKB como la parte principal y `keyd` como una capa opcional.
+
+Al activar una configuración importada:
+
+1. intenta aplicar el `keyd.conf` asociado, si existe;
+2. aplica la distribución XKB;
+3. guarda el perfil como configuración activa.
+
+Si `keyd` falla, UrOwnKeyboard puede mantener XKB activo y mostrar un aviso no bloqueante.
+
+Al volver a una distribución normal del sistema, UrOwnKeyboard deja `/etc/keyd/default.conf` en modo neutral:
+
+```ini
+[ids]
+*
+
+[main]
+```
+
+Esto significa que el servicio `keyd` puede seguir activo, pero sin remapeos personalizados.
+
+Comprobar estado:
+
+```bash
+sudo cat /etc/keyd/default.conf
+systemctl is-active keyd
+```
+
+Es normal que `systemctl is-active keyd` muestre:
 
 ```text
-1. Configuration name
-2. XKB / symbols file
-3. Optional keyd.conf file
+active
 ```
 
-Selecciona sólo el archivo XKB si únicamente quieres cambiar la distribución de teclado.
+Lo importante es que `/etc/keyd/default.conf` esté neutral cuando uses una distribución normal.
 
-Selecciona también un archivo `keyd.conf` si quieres aplicar remapeos físicos o atajos personalizados.
+---
 
-## Crear una configuración visualmente
+## GNOME
 
-Selecciona:
+En GNOME, UrOwnKeyboard lee las fuentes de entrada desde:
+
+```bash
+gsettings get org.gnome.desktop.input-sources sources
+```
+
+También puede cambiar la fuente activa de GNOME y aplicar XKB.
+
+Para ocultar el indicador nativo de GNOME, el instalador incluye una extensión local:
 
 ```text
-New configuration… → Open visual editor…
+gnome-extension/
+├── extension.js
+└── metadata.json
 ```
 
-Después:
+Activación manual:
 
-```text
-1. Elige una distribución base en la barra lateral.
-2. Edita las teclas que quieras cambiar.
-3. Ponle un nombre a la configuración.
-4. Usa "Export XKB…" si sólo quieres guardar el archivo.
-5. Usa "Import into UOK…" si quieres añadirla directamente a UrOwnKeyboard.
+```bash
+gnome-extensions enable hide-input-source@teclado-indicador
 ```
 
-Las configuraciones importadas aparecerán después en el menú del indicador.
+---
 
-Si el menú ya estaba abierto o no se actualiza automáticamente, usa:
+## XFCE
 
-```text
-Reload list
+En XFCE, UrOwnKeyboard puede leer fuentes desde:
+
+- `xfconf-query`;
+- `setxkbmap -query`;
+- IBus, si está activo;
+- configuraciones detectables del panel.
+
+Para abrir la configuración de teclado de XFCE:
+
+```bash
+xfce4-keyboard-settings
 ```
 
-## Añadir distribuciones desde la configuración del sistema
+Para comprobar la configuración actual:
 
-Selecciona:
-
-```text
-New configuration… → Add from settings…
+```bash
+xfconf-query -c keyboard-layout -l -v
+setxkbmap -query
 ```
 
-Esto abre el apartado de teclado de la configuración del sistema.
+UrOwnKeyboard intenta ocultar indicadores nativos o de IBus en el panel de XFCE cuando interfieren con el menú propio.
 
-Desde ahí puedes añadir distribuciones del sistema. Después aparecerán en el editor visual dentro de:
-
-```text
-Added to system
-```
-
-## Mostrar configuración completa
-
-La opción:
-
-```text
-Show full configuration
-```
-
-abre el visor gráfico XKB y muestra información del perfil activo, incluyendo su archivo `keyd.conf` asociado si existe.
-
-Esto permite ver en una sola acción:
-
-```text
-- la distribución XKB activa;
-- el perfil activo de UrOwnKeyboard;
-- el archivo XKB usado;
-- el archivo keyd.conf asociado;
-- el contenido del keyd.conf activo.
-```
-
-## Recarga automática de la interfaz gráfica
-
-Cuando se usa `uok import` o `uok delete`, el indicador gráfico se recarga automáticamente si está abierto.
-
-Esto permite que las configuraciones nuevas o eliminadas aparezcan en el menú sin tener que reiniciar manualmente el indicador.
-
-También puedes forzar la recarga desde el menú:
-
-```text
-Reload list
-```
-
-## Compatibilidad
-
-El núcleo `uok` puede funcionar en cualquier entorno Linux compatible con XKB y keyd.
-
-El indicador gráfico usa AppIndicator/Ayatana, por lo que puede funcionar en GNOME y en otros escritorios compatibles con indicadores de aplicación.
-
-El editor visual usa GTK 3 y herramientas XKB como `setxkbmap` y `xkbcomp`.
-
-La extensión para ocultar el indicador nativo de teclado es específica de GNOME. En otros escritorios, ocultar el indicador nativo dependerá del propio entorno.
+---
 
 ## Estructura del proyecto
 
 ```text
-UrOwnKeyboard/
+.
+├── gnome-extension
+│   ├── extension.js
+│   └── metadata.json
+├── helpers
+│   └── keyd-aplicar-conf
+├── install.sh
+├── make-release.sh
+├── README.md
 ├── teclado-indicador.py
+├── uninstall.sh
 ├── uok
+├── uok-layout-editor.keyd.py
 ├── uok-layout-editor.py
 ├── uok_xkb_sources.py
-├── uok_xkb_symbols.py
-├── install.sh
-├── uninstall.sh
-├── helpers/
-│   └── keyd-aplicar-conf
-├── gnome-extension/
-│   ├── metadata.json
-│   └── extension.js
-└── README.md
+└── uok_xkb_symbols.py
 ```
+
+Archivos principales:
+
+| Archivo | Función |
+|---|---|
+| `uok` | CLI principal |
+| `teclado-indicador.py` | Indicador gráfico |
+| `uok-layout-editor.py` | Editor visual XKB |
+| `uok_xkb_sources.py` | Lectura de fuentes XKB del sistema/escritorio |
+| `uok_xkb_symbols.py` | Utilidades para símbolos XKB |
+| `helpers/keyd-aplicar-conf` | Helper con sudo para aplicar keyd |
+| `install.sh` | Instalador |
+| `uninstall.sh` | Desinstalador |
+| `make-release.sh` | Generador de release |
+
+---
+
+## Crear una release
+
+```bash
+./make-release.sh
+```
+
+El script genera una carpeta `release/` con el paquete y el `.tar.gz`.
+
+---
 
 ## Desinstalación
 
 ```bash
-cd "$HOME/UrOwnKeyboard"
 ./uninstall.sh
 ```
 
-Esto elimina:
+Esto elimina los archivos instalados por UrOwnKeyboard.
 
-```text
-- el indicador instalado;
-- el comando uok instalado;
-- el editor visual instalado;
-- la entrada de autoinicio;
-- la extensión local de GNOME;
-- el helper de keyd;
-- la regla sudoers.
+Si quieres dejar keyd neutral manualmente:
+
+```bash
+sudo tee /etc/keyd/default.conf >/dev/null <<'EOF2'
+[ids]
+*
+
+[main]
+EOF2
+sudo systemctl restart keyd
 ```
 
-No borra tus configuraciones importadas en:
+---
 
-```text
-~/.config/teclado-indicador/
-~/.xkb/symbols/
+## Solución de problemas
+
+### No aparece el indicador
+
+Comprueba que el autoinicio existe:
+
+```bash
+ls ~/.config/autostart/teclado-indicador.desktop
 ```
 
-## Seguridad
+Reinicia manualmente:
 
-UrOwnKeyboard no ejecuta scripts importados.
-
-Sólo gestiona:
-
-```text
-- archivos XKB / symbols;
-- archivos keyd.conf.
+```bash
+pkill -f teclado-indicador.py 2>/dev/null || true
+pkill -f uok-indicator-start 2>/dev/null || true
+rm -rf "/tmp/uok-indicator-$USER.lock"
+~/.local/bin/uok-indicator-start &
 ```
 
-Para aplicar configuraciones keyd sin pedir contraseña cada vez, el instalador crea una regla sudoers limitada al helper:
+### keyd no aplica una configuración
 
-```text
-/usr/local/sbin/keyd-aplicar-conf
+Comprueba el archivo asociado:
+
+```bash
+uok current-keyd
+sudo journalctl -u keyd -n 120 --no-pager
 ```
 
-Ese helper sólo acepta archivos situados dentro de la carpeta de configuración del usuario.
+Comprueba que el helper funciona:
 
-## Limitaciones
+```bash
+sudo /usr/local/sbin/keyd-aplicar-conf ~/.config/teclado-indicador/keyd/ID_DEL_PERFIL.conf
+```
 
-- Tras instalar, puede ser necesario cerrar sesión y volver a entrar para que GNOME detecte la extensión que oculta el indicador nativo de teclado.
-- Ocultar el indicador nativo de teclado fuera de GNOME depende de cada entorno de escritorio.
-- Algunas distribuciones XKB usan símbolos Unicode poco comunes. Si se ven cuadrados en el editor visual, instala fuentes adicionales como `fonts-noto-extra`.
+### keyd está activo al volver a una distribución normal
+
+Eso es correcto.
+
+Comprueba que esté neutral:
+
+```bash
+sudo cat /etc/keyd/default.conf
+```
+
+Debe mostrar:
+
+```ini
+[ids]
+*
+
+[main]
+```
+
+### El editor genera un keyd.conf demasiado grande
+
+No debería ocurrir en la versión actual.
+
+Comprueba:
+
+```bash
+wc -l ~/.config/teclado-indicador/keyd/mi_teclado.conf
+grep -n '^\[' ~/.config/teclado-indicador/keyd/mi_teclado.conf
+```
+
+Si aparecen muchas secciones de combinaciones de modificadores, elimina esa configuración y vuelve a generarla con la versión actual del editor.
+
+---
+
+## Notas sobre fuentes Unicode
+
+Algunas distribuciones usan símbolos Unicode poco comunes. Para mejorar su visualización se recomienda tener instaladas las fuentes Noto.
+
+El instalador intenta instalar:
+
+```bash
+fonts-noto-core fonts-noto-extra
+```
+
+Instalación manual:
+
+```bash
+sudo apt install -y fonts-noto-core fonts-noto-extra
+```
+
+---
+
+## Licencia
+
+Indica aquí la licencia del proyecto.
