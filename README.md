@@ -37,28 +37,22 @@ En **XFCE**, UrOwnKeyboard puede leer distribuciones añadidas desde la configur
 ## Funciones
 
 - Importar distribuciones XKB desde archivos.
-- Crear distribuciones nuevas desde un editor visual.
-- Usar como base una distribución del sistema, una fuente añadida desde la configuración del escritorio o una configuración propia de UrOwnKeyboard.
+- Crear distribuciones nuevas desde un editor visual usando como base una distribución del sistema, o una configuración propia de UrOwnKeyboard.
 - Editar teclas visualmente, incluyendo niveles normal, Shift, AltGr y AltGr+Shift.
 - Exportar una distribución editada como archivo XKB.
-- Importar directamente una distribución editada en UrOwnKeyboard.
 - Asociar opcionalmente un archivo `keyd.conf`.
 - Aplicar automáticamente XKB + keyd.
-- Volver a una distribución normal dejando `keyd` en modo neutral.
+- Cambiar entre distribuciones.
 - Listar configuraciones importadas.
 - Eliminar configuraciones importadas.
 - Mostrar la configuración activa.
-- Mostrar el `keyd.conf` asociado a la configuración activa.
-- Mostrar una vista completa de la configuración activa.
-- Usar un menú gráfico en la barra superior o panel.
-- Abrir la configuración de teclado del sistema desde el menú gráfico.
-- Ocultar el indicador nativo de teclado en GNOME.
-- Ocultar el indicador nativo/IBus en XFCE cuando sea posible.
+- Menú gráfico en la barra superior o panel.
+- Ocultar el indicadores nativos de teclado.
 - Iniciarse automáticamente al iniciar sesión.
 
 ---
 
-## Instalación rápida
+## Instalación
 
 En Ubuntu, Debian y derivadas:
 
