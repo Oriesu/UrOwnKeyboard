@@ -1114,6 +1114,138 @@ class CaptureKeyDialog(Gtk.Dialog):
 
 
 
+
+
+class KeydKeyPicker(Gtk.Box):
+    """
+    Selector compacto de tecla keyd.
+
+    Usa botón + diálogo modal con buscador y scroll.
+    Evita que el desplegable se recorte dentro del diálogo de editar atajo.
+    """
+    def __init__(self, key_options, selected_key=""):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+
+        self.key_options = list(key_options or [])
+        self.selected_key = selected_key or (self.key_options[0][1] if self.key_options else "")
+
+        self.button = Gtk.Button()
+        self.button.set_hexpand(True)
+        self.button.set_halign(Gtk.Align.FILL)
+        self.button.connect("clicked", self.on_button_clicked)
+        self.pack_start(self.button, True, True, 0)
+
+        self.update_button_label()
+
+    def option_text(self, option):
+        label, key_name, _code = option
+        return f"{label}  [{key_name}]"
+
+    def update_button_label(self):
+        text = self.selected_key or "Seleccionar tecla"
+
+        for option in self.key_options:
+            if option[1] == self.selected_key:
+                text = self.option_text(option)
+                break
+
+        self.button.set_label(text)
+
+    def on_button_clicked(self, _button):
+        dialog = Gtk.Dialog(
+            title="Seleccionar tecla",
+            transient_for=self.get_toplevel() if isinstance(self.get_toplevel(), Gtk.Window) else None,
+            flags=Gtk.DialogFlags.MODAL,
+        )
+
+        dialog.add_button("Cancelar", Gtk.ResponseType.CANCEL)
+
+        dialog.set_default_size(420, 420)
+        dialog.set_resizable(True)
+
+        area = dialog.get_content_area()
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        outer.set_margin_top(10)
+        outer.set_margin_bottom(10)
+        outer.set_margin_start(10)
+        outer.set_margin_end(10)
+        area.pack_start(outer, True, True, 0)
+
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text("Buscar tecla…")
+        outer.pack_start(search, False, False, 0)
+
+        listbox = Gtk.ListBox()
+        listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_size_request(380, 300)
+        scrolled.add(listbox)
+        outer.pack_start(scrolled, True, True, 0)
+
+        def rebuild():
+            for row in list(listbox.get_children()):
+                listbox.remove(row)
+
+            query = search.get_text().strip().lower()
+
+            for option in self.key_options:
+                label, key_name, code = option
+                haystack = " ".join([str(label), str(key_name), str(code)]).lower()
+
+                if query and query not in haystack:
+                    continue
+
+                row = Gtk.ListBoxRow()
+                row.uok_keyd_key = key_name
+                row.set_selectable(True)
+                row.set_activatable(True)
+
+                text = Gtk.Label(label=self.option_text(option))
+                text.set_xalign(0)
+                text.set_margin_top(6)
+                text.set_margin_bottom(6)
+                text.set_margin_start(8)
+                text.set_margin_end(8)
+                text.set_ellipsize(3)
+
+                row.add(text)
+                listbox.add(row)
+
+                if key_name == self.selected_key:
+                    listbox.select_row(row)
+
+            listbox.show_all()
+
+        def choose(row):
+            key = getattr(row, "uok_keyd_key", "")
+
+            if key:
+                self.selected_key = key
+                self.update_button_label()
+                dialog.response(Gtk.ResponseType.OK)
+
+        def on_row_activated(_listbox, row):
+            choose(row)
+
+        def on_search_changed(_entry):
+            rebuild()
+
+        listbox.connect("row-activated", on_row_activated)
+        search.connect("search-changed", on_search_changed)
+
+        rebuild()
+        dialog.show_all()
+        search.grab_focus()
+
+        dialog.run()
+        dialog.destroy()
+
+    def get_selected_key(self):
+        return self.selected_key
+
+
 class KeydShortcutDialog(Gtk.Dialog):
     def __init__(self, parent, key_options, rule=None, block_all_shortcuts=False):
         super().__init__(title="Editar atajo keyd", transient_for=parent, flags=0)
@@ -1230,19 +1362,15 @@ class KeydShortcutDialog(Gtk.Dialog):
         self.on_action_toggled(None)
         self.show_all()
 
+
     def make_key_combo(self, selected_key):
-        combo = Gtk.ComboBoxText()
-        active_index = 0
+        return KeydKeyPicker(self.key_options, selected_key)
 
-        for idx, (label, key_name, _code) in enumerate(self.key_options):
-            combo.append_text(f"{label}  [{key_name}]")
-            if key_name == selected_key:
-                active_index = idx
-
-        combo.set_active(active_index)
-        return combo
 
     def selected_key(self, combo):
+        if hasattr(combo, "get_selected_key"):
+            return combo.get_selected_key()
+
         index = combo.get_active()
         if index < 0 or index >= len(self.key_options):
             return ""
@@ -2092,60 +2220,309 @@ class UokLayoutEditor(Gtk.Window):
                 for key_name in spec["keys"]:
                     groups[current_layer][key_name] = (f"layer({next_layer})", None)
 
+
+
+
+
+    def keyd_keysym_to_keyd_name(self, sym):
+        raw = (sym or "").strip()
+
+        if not raw or raw == "NoSymbol":
+            return ""
+
+        text = symbol_to_text(raw)
+
+        if text:
+            raw = text
+
+        value = raw.strip()
+
+        aliases = {
+            " ": "space",
+            "space": "space",
+            "Space": "space",
+
+            ".": "dot",
+            "period": "dot",
+            "dot": "dot",
+
+            ",": "comma",
+            "comma": "comma",
+
+            ";": "semicolon",
+            "semicolon": "semicolon",
+
+            ":": "colon",
+            "colon": "colon",
+
+            "/": "slash",
+            "slash": "slash",
+
+            "backslash": "backslash",
+
+            "'": "apostrophe",
+            "apostrophe": "apostrophe",
+
+            "`": "grave",
+            "grave": "grave",
+
+            "-": "minus",
+            "minus": "minus",
+
+            "=": "equal",
+            "equal": "equal",
+
+            "[": "leftbrace",
+            "bracketleft": "leftbrace",
+            "leftbrace": "leftbrace",
+
+            "]": "rightbrace",
+            "bracketright": "rightbrace",
+            "rightbrace": "rightbrace",
+
+            "<": "102nd",
+            "less": "102nd",
+
+            "Tab": "tab",
+            "tab": "tab",
+            "Return": "enter",
+            "Enter": "enter",
+            "enter": "enter",
+            "BackSpace": "backspace",
+            "backspace": "backspace",
+            "Escape": "esc",
+            "Esc": "esc",
+            "esc": "esc",
+        }
+
+        aliases[chr(92)] = "backslash"
+
+        if value in aliases:
+            return aliases[value]
+
+        low = value.lower()
+
+        if re.fullmatch(r"[a-z0-9]", low):
+            return low
+
+        if re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", low):
+            return low
+
+        return aliases.get(low, low)
+
+
+    def keyd_translation_symbols(self):
+        include = getattr(self, "include_name", "") or active_base_include()
+
+        text = ""
+
+        try:
+            text = xkb_dump_from_include(include)
+        except Exception:
+            text = ""
+
+        symbols = parse_key_symbols(text) if text else {}
+
+        if not symbols:
+            symbols = dict(getattr(self, "base_symbols", {}) or {})
+
+        for code, values in getattr(self, "changes", {}).items():
+            symbols[code] = values
+
+        return symbols
+
+
+    def keyd_inverse_layout_map(self):
+        out = {}
+        symbols = self.keyd_translation_symbols()
+
+        for code, values in symbols.items():
+            if not values:
+                continue
+
+            physical = keyd_name_for_code(code)
+
+            if not physical:
+                continue
+
+            logical = self.keyd_keysym_to_keyd_name(values[0])
+
+            if logical and logical not in out:
+                out[logical] = physical
+
+        for key in [
+            "esc", "tab", "enter", "backspace", "space",
+            "left", "right", "up", "down",
+            "pageup", "pagedown", "home", "end",
+            "insert", "delete",
+        ]:
+            out.setdefault(key, key)
+
+        for i in range(1, 25):
+            out.setdefault(f"f{i}", f"f{i}")
+
+        return out
+
+
+    def keyd_translate_target_key(self, key):
+        key = (key or "").strip()
+
+        if not key:
+            return ""
+
+        inverse = self.keyd_inverse_layout_map()
+        return inverse.get(key, key)
+
+
+    def keyd_target_expr_translated(self, rule):
+        if rule.get("action") != "replace":
+            return "noop"
+
+        mods = list(rule.get("target_mods", []))
+        key = self.keyd_translate_target_key(rule.get("target_key", ""))
+
+        if not key:
+            return ""
+
+        if mods:
+            return "-".join(mods + [key])
+
+        return key
+
+
+    def keyd_required_layers_for_rules(self, rules):
+        required = set()
+
+        for rule in rules:
+            mods = self.keyd_normalized_mods(rule.get("source_mods", []))
+
+            if not mods:
+                continue
+
+            required.add(mods)
+
+            for i in range(1, len(mods)):
+                required.add(mods[:i])
+
+            if len(mods) > 1:
+                for mod in mods:
+                    parent = tuple(x for x in mods if x != mod)
+
+                    if parent:
+                        required.add(self.keyd_normalized_mods(parent))
+
+        if getattr(self, "keyd_block_all_shortcuts", False):
+            try:
+                required.update(self.keyd_all_modifier_combinations())
+            except Exception:
+                pass
+
+        return {
+            self.keyd_normalized_mods(layer)
+            for layer in required
+            if layer
+        }
+
+
     def build_keyd_conf(self):
+        """
+        Genera keyd.conf con capas y traducción XKB.
+
+        Modelo esperado como en dvorak_esprog:
+        Ctrl+c lógico puede acabar como c = C-i si el layout XKB hace que
+        la tecla física i produzca el símbolo c.
+        """
         if not self.keyd_shortcuts:
             return ""
 
+        rules = [
+            rule for rule in self.keyd_shortcuts
+            if rule.get("source_key", "")
+        ]
+
+        if not rules:
+            return ""
+
+        required_layers = self.keyd_required_layers_for_rules(rules)
+
+        groups = {}
+        self.keyd_add_layer_transitions(groups, required_layers)
+
+        used = set()
+
+        def add_rule(section, left, right, comment=None):
+            if not section or not left or not right:
+                return
+
+            key = (section, left)
+
+            if key in used:
+                return
+
+            used.add(key)
+            groups.setdefault(section, {})
+            groups[section][left] = (right, comment)
+
+        for rule in rules:
+            source_key = rule.get("source_key", "")
+            source_mods = self.keyd_normalized_mods(rule.get("source_mods", []))
+            section = self.keyd_layer_name_for_mods(source_mods) if source_mods else "main"
+            target = self.keyd_target_expr_translated(rule)
+
+            if not source_key or not target:
+                continue
+
+            add_rule(
+                section,
+                source_key,
+                target,
+                self.keyd_rule_label(rule),
+            )
+
         lines = [
             "# Generated by UrOwnKeyboard visual editor",
-            "# Safe keyd mode: explicit shortcuts only.",
-            "# This avoids keyd MAX_SECTIONS crashes.",
+            "# Safe keyd mode: explicit shortcut layers only.",
+            "# Targets are translated through the active XKB layout.",
             "",
             "[ids]",
             "*",
             "",
-            "[main]",
         ]
 
-        used = set()
+        ordered_sections = ["main"] + [
+            self.keyd_layer_name_for_mods(layer)
+            for layer in sorted(required_layers, key=lambda x: (len(x), x))
+        ]
 
-        for rule in self.keyd_shortcuts:
-            key = rule.get("source_key", "")
-            if not key:
+        emitted = set()
+
+        for section in ordered_sections:
+            if section in emitted:
                 continue
 
-            source_mods = self.keyd_normalized_mods(rule.get("source_mods", []))
-            source_prefix = []
+            emitted.add(section)
+            body = groups.get(section, {})
 
-            for mod in source_mods:
-                if mod == "ctrl":
-                    source_prefix.append("control")
-                elif mod == "alt":
-                    source_prefix.append("alt")
-                elif mod == "shift":
-                    source_prefix.append("shift")
-                elif mod == "meta":
-                    source_prefix.append("meta")
-                elif mod == "altgr":
-                    source_prefix.append("rightalt")
-
-            source = "+".join(source_prefix + [key]) if source_prefix else key
-            target = self.keyd_target_expr(rule)
-
-            if not source or source in used:
+            if not body:
                 continue
 
-            used.add(source)
+            lines.append(f"[{section}]")
 
-            comment = keyd_escape_comment_text(self.keyd_rule_label(rule))
-            lines.append(f"# {comment}")
-            lines.append(f"{source} = {target}")
+            for left, value in body.items():
+                right, comment = value
+
+                if comment:
+                    lines.append(f"# {keyd_escape_comment_text(comment)}")
+
+                lines.append(f"{left} = {right}")
+
+            lines.append("")
 
         if len(lines) <= 8:
             return ""
 
-        lines.append("")
         return chr(10).join(lines)
+
 
     def on_preview_keyd_conf(self, _button):
         content = self.build_keyd_conf()

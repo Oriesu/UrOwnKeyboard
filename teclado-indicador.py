@@ -566,6 +566,52 @@ def borrar_si_seguro(path_str):
         path.unlink()
 
 
+
+def uok_profile_is_current(profile):
+    if not profile or not CURRENT_PROFILE.exists():
+        return False
+
+    try:
+        current = json.loads(CURRENT_PROFILE.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    return (
+        current.get("type") == "imported-profile"
+        and current.get("id")
+        and current.get("id") == profile.get("id")
+    )
+
+
+def uok_safe_before_delete_profile(profile):
+    """
+    Si se borra el perfil activo, keyd no debe quedarse aplicando un .conf
+    que va a desaparecer.
+
+    También dejamos XKB en una distribución segura para no seguir apuntando
+    a un archivo ~/.xkb/symbols/<perfil> borrado.
+    """
+    if not uok_profile_is_current(profile):
+        return True
+
+    # Primero apagar keyd si el perfil activo tenía keyd asociado.
+    if profile.get("keyd_conf"):
+        if not aplicar_keyd_off_sync():
+            return False
+
+    # Luego cambiar a un XKB seguro.
+    run_menu_cmd(["setxkbmap", "es"])
+
+    # Y eliminar el marcador de perfil activo para que el arranque no intente reactivarlo.
+    try:
+        if CURRENT_PROFILE.exists():
+            CURRENT_PROFILE.unlink()
+    except Exception:
+        pass
+
+    return True
+
+
 def eliminar_configuracion(_):
     profiles = load_profiles()
 
@@ -610,6 +656,9 @@ def eliminar_configuracion(_):
     )
 
     if confirm != "yes":
+        return
+
+    if not uok_safe_before_delete_profile(profile):
         return
 
     borrar_si_seguro(profile.get("xkb_file"))
