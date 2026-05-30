@@ -1,4 +1,123 @@
 #!/usr/bin/env python3
+# --------------------------------------------------------------------
+# UOK MATE helper: force visible layouts from MATE settings in editor
+# --------------------------------------------------------------------
+
+def uok_editor_mate_layouts_from_gsettings():
+    """
+    Lee las distribuciones añadidas en MATE:
+    org.mate.peripherals-keyboard-xkb.kbd layouts
+    """
+    desktop = " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+
+    if "mate" not in desktop:
+        return []
+
+    try:
+        result = subprocess.run(
+            [
+                "gsettings",
+                "get",
+                "org.mate.peripherals-keyboard-xkb.kbd",
+                "layouts",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    raw_layouts = re.findall(r"'([^']+)'", result.stdout.strip())
+    rows = []
+
+    label_map = {
+        "es": "Español",
+        "de": "Alemán",
+        "us": "Inglés (EE. UU.)",
+        "gb": "Inglés (Reino Unido)",
+        "fr": "Francés",
+        "it": "Italiano",
+        "pt": "Portugués",
+        "br": "Portugués (Brasil)",
+    }
+
+    for raw in raw_layouts:
+        raw = (raw or "").strip()
+
+        if not raw:
+            continue
+
+        if "+" in raw:
+            layout, variant = raw.split("+", 1)
+        elif "(" in raw and raw.endswith(")"):
+            layout, variant = raw[:-1].split("(", 1)
+        else:
+            layout, variant = raw, ""
+
+        layout = layout.strip()
+        variant = variant.strip()
+
+        if not layout:
+            continue
+
+        include = layout if not variant else f"{layout}({variant})"
+        source_id = layout if not variant else f"{layout}+{variant}"
+        label = label_map.get(layout, layout.upper())
+
+        if variant:
+            label = f"{label} ({variant})"
+
+        rows.append({
+            "section": "Añadidas del sistema",
+            "kind": "system-other",
+            "id": f"mate-gsettings:{source_id}",
+            "source_id": source_id,
+            "include": include,
+            "label": label,
+            "description": "Distribución añadida en los ajustes de MATE",
+            "xkb_file": "",
+        })
+
+    return rows
+
+
+def uok_editor_merge_mate_gsettings_layouts(source_items):
+    rows = uok_editor_mate_layouts_from_gsettings()
+
+    if not rows:
+        return source_items
+
+    seen = set()
+    merged = []
+
+    for row in rows:
+        key = row.get("source_id") or row.get("include") or row.get("id")
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        merged.append(row)
+
+    for item in source_items:
+        key = item.get("source_id") or item.get("include") or item.get("id")
+
+        if key in seen and item.get("section") != "UOK":
+            continue
+
+        merged.append(item)
+
+    return merged
+
+
 import os
 import re
 import ctypes
@@ -199,6 +318,149 @@ KEYD_KEY_NAMES = {
     "FK23": "f23",
     "FK24": "f24",
 }
+
+
+
+# --------------------------------------------------------------------
+# UOK visual editor: MATE system input sources
+# --------------------------------------------------------------------
+
+def uok_editor_is_mate_desktop():
+    import os
+    desktop = (
+        os.environ.get("XDG_CURRENT_DESKTOP", "") + ":" +
+        os.environ.get("DESKTOP_SESSION", "")
+    ).lower()
+    return "mate" in desktop
+
+
+def uok_editor_run_cmd(args):
+    import subprocess
+    return subprocess.run(args, text=True, capture_output=True)
+
+
+def uok_editor_layout_label(layout, variant=""):
+    names = {
+        "es": "Español",
+        "de": "Alemán",
+        "us": "Inglés (US)",
+        "gb": "Inglés (UK)",
+        "fr": "Francés",
+        "it": "Italiano",
+        "pt": "Portugués",
+    }
+
+    label = names.get(layout, layout)
+
+    if variant:
+        label = f"{label} ({variant})"
+
+    return label
+
+
+def uok_editor_mate_system_sources():
+    """
+    Devuelve solo distribuciones del sistema ya configuradas en MATE.
+
+    No usa 'ibus list-engine' como fuente principal porque eso enumera todos
+    los motores instalados. Para IBus lee solo preload-engines.
+    """
+    if not uok_editor_is_mate_desktop():
+        return []
+
+    out = []
+    seen = set()
+
+    # 1) XKB activo/configurado en la sesión.
+    result = uok_editor_run_cmd(["setxkbmap", "-query"])
+
+    if result.returncode == 0:
+        layout_line = ""
+        variant_line = ""
+
+        for line in result.stdout.splitlines():
+            line = line.strip()
+
+            if line.startswith("layout:"):
+                layout_line = line.split(":", 1)[1].strip()
+            elif line.startswith("variant:"):
+                variant_line = line.split(":", 1)[1].strip()
+
+        layouts = [x.strip() for x in layout_line.split(",") if x.strip()]
+        variants = [x.strip() for x in variant_line.split(",")] if variant_line else []
+
+        while len(variants) < len(layouts):
+            variants.append("")
+
+        for layout, variant in zip(layouts, variants):
+            sid = layout if not variant else f"{layout}+{variant}"
+
+            if sid in seen:
+                continue
+
+            seen.add(sid)
+
+            out.append({
+                "kind": "system-xkb",
+                "id": sid,
+                "label": uok_editor_layout_label(layout, variant),
+                "layout": layout,
+                "variant": variant,
+            })
+
+    # 2) IBus configurado, no todos los motores instalados.
+    result = uok_editor_run_cmd([
+        "gsettings",
+        "get",
+        "org.freedesktop.ibus.general",
+        "preload-engines",
+    ])
+
+    if result.returncode == 0:
+        engine_ids = re.findall(r"'([^']+)'", result.stdout.strip())
+
+        for engine_id in engine_ids:
+            if not engine_id.startswith("xkb:"):
+                continue
+
+            parts = engine_id.split(":")
+            layout = parts[1] if len(parts) > 1 else ""
+            variant = parts[2] if len(parts) > 2 else ""
+
+            if not layout:
+                continue
+
+            sid = layout if not variant else f"{layout}+{variant}"
+
+            if sid in seen:
+                continue
+
+            seen.add(sid)
+
+            out.append({
+                "kind": "system-ibus",
+                "id": engine_id,
+                "label": uok_editor_layout_label(layout, variant),
+                "layout": layout,
+                "variant": variant,
+            })
+
+    return out
+
+
+def uok_editor_system_source_rows():
+    """
+    Filas de texto listas para insertar en combos/listas del editor visual.
+    """
+    return [
+        {
+            "id": source["id"],
+            "label": source["label"],
+            "display": f'{source["label"]} — sistema',
+            "kind": source["kind"],
+        }
+        for source in uok_editor_mate_system_sources()
+    ]
 
 
 def keyd_name_for_code(code):
@@ -1004,6 +1266,62 @@ class KeydShortcutDialog(Gtk.Dialog):
             "target_key": self.selected_key(self.target_key_combo),
         }
 
+
+# --------------------------------------------------------------------
+# UOK visual editor: add MATE system layouts to the source list
+# --------------------------------------------------------------------
+
+
+
+
+
+def uok_editor_append_mate_system_sources(source_items):
+    """
+    Inserta en el editor visual las distribuciones añadidas del sistema en MATE.
+
+    Usa una lista plana, con IDs propios para que no se dedupliquen contra
+    "Others", pero con include/source_id apuntando al layout XKB real.
+    """
+    if not uok_editor_is_mate_desktop():
+        return source_items
+
+    if not isinstance(source_items, list):
+        return source_items
+
+    rows = uok_editor_system_source_rows()
+    if not rows:
+        return source_items
+
+    added = []
+
+    for row in rows:
+        layout_id = row.get("id", "")
+        label = row.get("label") or layout_id
+
+        if not layout_id:
+            continue
+
+        added.append({
+            "section": "Añadidas del sistema",
+            "kind": "system-other",
+            "id": f"mate-system:{layout_id}",
+            "source_id": layout_id,
+            "include": layout_id,
+            "label": label,
+            "description": "Distribución del sistema añadida",
+            "xkb_file": "",
+        })
+
+    # Quitar versiones anteriores de esta misma sección para no duplicar.
+    cleaned = []
+    for item in source_items:
+        if isinstance(item, dict) and item.get("section") == "Añadidas del sistema":
+            continue
+        cleaned.append(item)
+
+    return added + cleaned
+
+
 class UokLayoutEditor(Gtk.Window):
     def __init__(self):
         super().__init__(title="UrOwnKeyboard - Editor visual")
@@ -1036,6 +1354,8 @@ class UokLayoutEditor(Gtk.Window):
         self.root_paned = root_paned
 
         self.source_items = load_xkb_sources(CURRENT_PROFILE, CONFIG / "profiles")
+        self.source_items = uok_editor_merge_mate_gsettings_layouts(self.source_items)
+        self.source_items = uok_editor_append_mate_system_sources(self.source_items)
 
         sidebar = self.build_sources_sidebar()
         sidebar.set_hexpand(True)
@@ -1259,11 +1579,15 @@ class UokLayoutEditor(Gtk.Window):
         return row
 
     def rebuild_sources_list(self):
+        try:
+            self.source_items = uok_editor_merge_mate_gsettings_layouts(self.source_items)
+        except Exception:
+            pass
         for child in list(self.sources_list.get_children()):
             self.sources_list.remove(child)
 
         query = self.sources_search.get_text().strip() if hasattr(self, "sources_search") else ""
-        sections = ["UOK", "Added to system", "Others"]
+        sections = ["UOK", "Añadidas del sistema", "Added to system", "Others"]
 
         for section in sections:
             items = [
