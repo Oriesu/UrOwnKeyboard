@@ -2381,3 +2381,127 @@ def load_xkb_sources(current_profile_file, profiles_dir):
     ]
 
     return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
+
+
+# --------------------------------------------------------------------
+# UOK LXQt source wrapper
+# --------------------------------------------------------------------
+
+def uok_lxqt_is_desktop():
+    import os
+
+    desktop = " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+
+    return "lxqt" in desktop
+
+
+def uok_lxqt_sources_from_setxkbmap():
+    import re
+    import subprocess
+
+    if not uok_lxqt_is_desktop():
+        return []
+
+    try:
+        result = subprocess.run(
+            ["setxkbmap", "-query"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    layout_line = ""
+    variant_line = ""
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+
+        if line.startswith("layout:"):
+            layout_line = line.split(":", 1)[1].strip()
+        elif line.startswith("variant:"):
+            variant_line = line.split(":", 1)[1].strip()
+
+    layouts = [x.strip() for x in layout_line.split(",") if x.strip()]
+    variants = [x.strip() for x in variant_line.split(",")] if variant_line else []
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    rows = []
+    seen = set()
+
+    for layout, variant in zip(layouts, variants):
+        if not layout:
+            continue
+
+        source_id = layout if not variant else f"{layout}+{variant}"
+        include = layout if not variant else f"{layout}({variant})"
+
+        if source_id in seen:
+            continue
+
+        seen.add(source_id)
+
+        try:
+            label = layout_label(layout, variant)
+        except Exception:
+            label = source_id
+
+        rows.append({
+            "section": "Added to system",
+            "kind": "lxqt-setxkbmap",
+            "id": f"lxqt:{source_id}",
+            "source_id": source_id,
+            "include": include,
+            "label": label,
+            "description": source_id,
+            "xkb_file": "",
+        })
+
+    return rows
+
+
+def uok_lxqt_merge_sources(items):
+    extra = uok_lxqt_sources_from_setxkbmap()
+
+    if not extra:
+        return items
+
+    seen = set()
+    merged = []
+
+    for item in extra:
+        key = item.get("source_id") or item.get("include") or item.get("id")
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+
+    for item in items:
+        key = item.get("source_id") or item.get("include") or item.get("id")
+        if key in seen and item.get("section") != "UOK":
+            continue
+        merged.append(item)
+
+    return merged
+
+
+try:
+    __uok_base_load_xkb_sources_lxqt = load_xkb_sources
+
+    def load_xkb_sources(current_profile, profiles_dir):
+        return uok_lxqt_merge_sources(
+            __uok_base_load_xkb_sources_lxqt(current_profile, profiles_dir)
+        )
+except Exception:
+    pass
+

@@ -1694,12 +1694,254 @@ def uok_cinnamon_append_system_sources_to_menu(menu):
         menu.append(item)
 
 
+
+# --------------------------------------------------------------------
+# UOK LXQt: system layouts and native indicator hiding
+# --------------------------------------------------------------------
+
+def uok_lxqt_panel_conf_path():
+    return Path.home() / ".config/lxqt/panel.conf"
+
+
+def uok_lxqt_hide_native_input_indicators():
+    if not uok_is_lxqt_desktop():
+        return
+
+    # IBus.
+    for cmd in [
+        ["gsettings", "set", "org.freedesktop.ibus.panel", "show-icon-on-systray", "false"],
+        ["gsettings", "set", "org.freedesktop.ibus.panel", "show-im-name", "false"],
+    ]:
+        try:
+            run_menu_cmd(cmd)
+        except Exception:
+            pass
+
+    # LXQt keyboard indicator plugin: kbindicator.
+    # No tocamos tray/statusnotifier, porque ahí puede vivir UOK.
+    conf = uok_lxqt_panel_conf_path()
+
+    if not conf.exists():
+        return
+
+    try:
+        text = conf.read_text(encoding="utf-8")
+    except Exception:
+        return
+
+    original = text
+
+    # Quitar kbindicator de listas tipo plugins=...
+    text = re.sub(
+        r"(^plugins=.*)$",
+        lambda m: re.sub(r",?kbindicator,?|kbindicator,?", lambda x: "," if "," in x.group(0) else "", m.group(1)).replace(",,", ",").rstrip(","),
+        text,
+        flags=re.M,
+    )
+
+    # Quitar sección [kbindicator].
+    text = re.sub(
+        r"\n?\[kbindicator\]\n.*?(?=\n\[[^\]]+\]|\Z)",
+        "\n",
+        text,
+        flags=re.S,
+    )
+
+    if text != original:
+        try:
+            backup = conf.with_suffix(".conf.uok-backup")
+            if not backup.exists():
+                backup.write_text(original, encoding="utf-8")
+            conf.write_text(text, encoding="utf-8")
+        except Exception:
+            pass
+
+
+def uok_lxqt_layout_label(layout, variant=""):
+    labels = {
+        "es": "Español",
+        "de": "Alemán",
+        "us": "Inglés (EE. UU.)",
+        "gb": "Inglés (Reino Unido)",
+        "fr": "Francés",
+        "it": "Italiano",
+        "pt": "Portugués",
+        "br": "Portugués (Brasil)",
+    }
+
+    base = labels.get(layout, layout.upper())
+
+    if variant:
+        return f"{base} ({variant})"
+
+    return base
+
+
+def uok_lxqt_system_sources():
+    if not uok_is_lxqt_desktop():
+        return []
+
+    result = run_menu_cmd(["setxkbmap", "-query"])
+
+    if result.returncode != 0:
+        return []
+
+    layout_line = ""
+    variant_line = ""
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+
+        if line.startswith("layout:"):
+            layout_line = line.split(":", 1)[1].strip()
+        elif line.startswith("variant:"):
+            variant_line = line.split(":", 1)[1].strip()
+
+    layouts = [x.strip() for x in layout_line.split(",") if x.strip()]
+    variants = [x.strip() for x in variant_line.split(",")] if variant_line else []
+
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    rows = []
+    seen = set()
+
+    for layout, variant in zip(layouts, variants):
+        if not layout:
+            continue
+
+        sid = layout if not variant else f"{layout}+{variant}"
+
+        if sid in seen:
+            continue
+
+        seen.add(sid)
+
+        rows.append({
+            "kind": "xkb",
+            "id": sid,
+            "layout": layout,
+            "variant": variant,
+            "label": uok_lxqt_layout_label(layout, variant),
+        })
+
+    return rows
+
+
+def uok_lxqt_disable_keyd():
+    for cmd in [
+        ["sudo", "-n", "/usr/local/sbin/keyd-aplicar-conf", ""],
+        ["/usr/local/sbin/keyd-aplicar-conf", ""],
+    ]:
+        try:
+            result = run_menu_cmd(cmd)
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def uok_lxqt_apply_system_source(row):
+    layout = row.get("layout") or row.get("id", "").split("+", 1)[0]
+    variant = row.get("variant", "")
+
+    if not layout:
+        return
+
+    uok_lxqt_disable_keyd()
+
+    cmd = ["setxkbmap", layout]
+
+    if variant:
+        cmd += ["-variant", variant]
+
+    result = run_menu_cmd(cmd)
+
+    if result.returncode == 0:
+        notify("UrOwnKeyboard", f"Distribución activada: {row.get('label', layout)}")
+    else:
+        notify("UrOwnKeyboard", "No se pudo activar la distribución del sistema.")
+
+
+def uok_lxqt_append_system_sources_to_menu(menu):
+    if not uok_is_lxqt_desktop():
+        return
+
+    uok_lxqt_hide_native_input_indicators()
+
+    rows = uok_lxqt_system_sources()
+
+    if not rows:
+        return
+
+    menu.append(Gtk.SeparatorMenuItem())
+
+    title = Gtk.MenuItem(label="Distribuciones del sistema")
+    title.set_sensitive(False)
+    menu.append(title)
+
+    for row in rows:
+        item = Gtk.MenuItem(label=row.get("label", row.get("id", "")))
+        item.connect("activate", lambda _item, selected=row: uok_lxqt_apply_system_source(selected))
+        menu.append(item)
+
+
+
+# --------------------------------------------------------------------
+# UOK LXQt: remove legacy tray, keep statusnotifier
+# --------------------------------------------------------------------
+
+def uok_lxqt_remove_legacy_tray_keep_statusnotifier():
+    if not uok_is_lxqt_desktop():
+        return
+
+    conf = Path.home() / ".config/lxqt/panel.conf"
+
+    if not conf.exists():
+        return
+
+    try:
+        text = conf.read_text(encoding="utf-8")
+    except Exception:
+        return
+
+    if "[tray]" not in text:
+        return
+
+    backup = conf.with_suffix(".conf.uok-before-remove-tray")
+
+    try:
+        if not backup.exists():
+            backup.write_text(text, encoding="utf-8")
+    except Exception:
+        pass
+
+    # Quitar solo el tray clásico. Mantener statusnotifier.
+    new_text = re.sub(
+        r"(?ms)^\[tray\]\n.*?(?=^\[[^\]]+\]\n|\Z)",
+        "",
+        text,
+    )
+
+    new_text = re.sub(r"\n{3,}", "\n\n", new_text).strip() + "\n"
+
+    if new_text != text:
+        try:
+            conf.write_text(new_text, encoding="utf-8")
+        except Exception:
+            pass
+
+
 def crear_menu():
+    uok_lxqt_remove_legacy_tray_keep_statusnotifier()
     menu = Gtk.Menu()
 
     sources = get_sources()
     uok_mate_append_system_sources_to_menu(menu)
     uok_cinnamon_append_system_sources_to_menu(menu)
+    uok_lxqt_append_system_sources_to_menu(menu)
 
     for index, source in enumerate(sources):
         if len(source) != 2:
@@ -5061,6 +5303,67 @@ def abrir_ajustes_teclado(_item=None):
 
     except Exception as exc:
         notify("UrOwnKeyboard", f"No se pudo abrir la configuración de teclado de MATE: {exc}")
+
+
+
+# --------------------------------------------------------------------
+# UOK LXQt helpers
+# --------------------------------------------------------------------
+
+def uok_is_lxqt_desktop():
+    desktop = " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+
+    return "lxqt" in desktop
+
+
+try:
+    __uok_base_abrir_ajustes_teclado_lxqt = abrir_ajustes_teclado
+except Exception:
+    def __uok_base_abrir_ajustes_teclado_lxqt(_item=None):
+        notify("UrOwnKeyboard", "No se pudo abrir la configuración de teclado del sistema.")
+
+
+def abrir_ajustes_teclado(_item=None):
+    if not uok_is_lxqt_desktop():
+        return __uok_base_abrir_ajustes_teclado_lxqt(_item)
+
+    commands = [
+        ["lxqt-config-input"],
+        ["lxqt-config"],
+    ]
+
+    for cmd in commands:
+        try:
+            check = run_menu_cmd(["bash", "-lc", "command -v " + shlex.quote(cmd[0])])
+
+            if check.returncode != 0:
+                continue
+
+            shell_cmd = (
+                " ".join(shlex.quote(x) for x in cmd)
+                + "; "
+                + "pkill -f teclado-indicador.py 2>/dev/null || true; "
+                + "$HOME/.local/bin/teclado-indicador.py >/dev/null 2>&1 &"
+            )
+
+            subprocess.Popen(
+                ["bash", "-lc", shell_cmd],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                env=menu_env(),
+            )
+            return
+
+        except Exception:
+            continue
+
+    notify("UrOwnKeyboard", "No se pudo abrir la configuración de teclado de LXQt.")
 
 
 uok_main_menu = crear_menu()
