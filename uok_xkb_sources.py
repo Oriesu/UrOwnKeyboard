@@ -285,6 +285,212 @@ def parse_system_xkb_sources():
     return out
 
 
+
+def read_gnome_input_sources_added():
+    """
+    Lee fuentes añadidas en GNOME/Cinnamon:
+    org.gnome.desktop.input-sources sources
+
+    Devuelve elementos compatibles con el editor visual.
+    """
+    out = []
+    seen = set()
+
+    try:
+        result = subprocess.run(
+            ["gsettings", "get", "org.gnome.desktop.input-sources", "sources"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return out
+
+    if result.returncode != 0:
+        return out
+
+    entries = re.findall(r"\('([^']+)',\s*'([^']+)'\)", result.stdout)
+
+    for kind, value in entries:
+        if kind != "xkb":
+            continue
+
+        raw = (value or "").strip()
+
+        if not raw:
+            continue
+
+        if "+" in raw:
+            layout, variant = raw.split("+", 1)
+            include = f"{layout}({variant})"
+            source_id = raw
+        elif "(" in raw and raw.endswith(")"):
+            layout, variant = raw[:-1].split("(", 1)
+            include = raw
+            source_id = f"{layout}+{variant}"
+        else:
+            layout, variant = raw, ""
+            include = layout
+            source_id = layout
+
+        if source_id in seen:
+            continue
+
+        seen.add(source_id)
+
+        label = layout_label(layout, variant) if "layout_label" in globals() else source_id
+
+        out.append({
+            "section": "Added to system",
+            "kind": "gnome-input-source",
+            "id": f"gnome-source:{source_id}",
+            "source_id": source_id,
+            "include": include,
+            "label": label,
+            "description": source_id,
+            "xkb_file": "",
+        })
+
+    return out
+
+
+def merge_gnome_input_sources_added(items):
+    added = read_gnome_input_sources_added()
+
+    if not added:
+        return items
+
+    seen = set()
+    merged = []
+
+    for item in added:
+        key = item.get("source_id") or item.get("include") or item.get("id")
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        merged.append(item)
+
+    for item in items:
+        key = item.get("source_id") or item.get("include") or item.get("id")
+
+        if key in seen and item.get("section") != "UOK":
+            continue
+
+        merged.append(item)
+
+    return merged
+
+
+
+def read_libgnomekbd_keyboard_layouts_added():
+    """
+    Lee distribuciones añadidas por Cinnamon/libgnomekbd:
+    org.gnome.libgnomekbd.keyboard layouts
+    """
+    import os
+    import re
+    import subprocess
+
+    desktop = " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+
+    if "cinnamon" not in desktop:
+        return []
+
+    try:
+        result = subprocess.run(
+            ["gsettings", "get", "org.gnome.libgnomekbd.keyboard", "layouts"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    raw_layouts = re.findall(r"'([^']+)'", result.stdout.strip())
+    out = []
+    seen = set()
+
+    for raw in raw_layouts:
+        raw = (raw or "").strip()
+
+        if not raw:
+            continue
+
+        if "+" in raw:
+            layout, variant = raw.split("+", 1)
+            include = f"{layout}({variant})"
+            source_id = raw
+        elif "(" in raw and raw.endswith(")"):
+            layout, variant = raw[:-1].split("(", 1)
+            include = raw
+            source_id = f"{layout}+{variant}"
+        else:
+            layout, variant = raw, ""
+            include = layout
+            source_id = layout
+
+        if source_id in seen:
+            continue
+
+        seen.add(source_id)
+
+        try:
+            label = layout_label(layout, variant)
+        except Exception:
+            label = source_id
+
+        out.append({
+            "section": "Added to system",
+            "kind": "libgnomekbd-layout",
+            "id": f"libgnomekbd:{source_id}",
+            "source_id": source_id,
+            "include": include,
+            "label": label,
+            "description": source_id,
+            "xkb_file": "",
+        })
+
+    return out
+
+
+def merge_libgnomekbd_keyboard_layouts_added(items):
+    added = read_libgnomekbd_keyboard_layouts_added()
+
+    if not added:
+        return items
+
+    seen = set()
+    merged = []
+
+    for item in added:
+        key = item.get("source_id") or item.get("include") or item.get("id")
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        merged.append(item)
+
+    for item in items:
+        key = item.get("source_id") or item.get("include") or item.get("id")
+
+        if key in seen and item.get("section") != "UOK":
+            continue
+
+        merged.append(item)
+
+    return merged
+
+
 def load_xkb_sources(current_profile_file, profiles_dir):
     uok_items = read_uok_profiles(profiles_dir)
     added_items = read_added_sources()
@@ -309,7 +515,7 @@ def load_xkb_sources(current_profile_file, profiles_dir):
         if item["source_id"] not in added_source_ids and item["include"] not in added_includes
     ]
 
-    return uok_items + added_items + other_items
+    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 # --------------------------------------------------------------------
@@ -469,7 +675,7 @@ def load_xkb_sources(current_profile_file, profiles_dir):
         if item["source_id"] not in added_source_ids and item["include"] not in added_includes
     ]
 
-    return uok_items + added_items + other_items
+    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 
@@ -723,7 +929,7 @@ def load_xkb_sources(current_profile_file, profiles_dir):
         if item["source_id"] not in added_source_ids and item["include"] not in added_includes
     ]
 
-    return uok_items + added_items + other_items
+    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 
@@ -963,7 +1169,7 @@ def load_xkb_sources(current_profile_file, profiles_dir):
         if item["source_id"] not in added_source_ids and item["include"] not in added_includes
     ]
 
-    return uok_items + added_items + other_items
+    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 
@@ -1075,7 +1281,7 @@ def load_xkb_sources(current_profile_file, profiles_dir):
         if item["source_id"] not in added_source_ids and item["include"] not in added_includes
     ]
 
-    return uok_items + added_items + other_items
+    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 
@@ -1226,7 +1432,7 @@ def load_xkb_sources(current_profile_file, profiles_dir):
         if item["source_id"] not in added_source_ids and item["include"] not in added_includes
     ]
 
-    return uok_items + added_items + other_items
+    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 # --------------------------------------------------------------------
@@ -1975,7 +2181,7 @@ def load_xkb_sources(current_profile_file, profiles_dir):
         if item["source_id"] not in added_source_ids and item["include"] not in added_includes
     ]
 
-    return uok_items + added_items + other_items
+    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 # --------------------------------------------------------------------
 # UOK Cinnamon visual editor sources override
@@ -2174,4 +2380,4 @@ def load_xkb_sources(current_profile_file, profiles_dir):
         if item["source_id"] not in added_source_ids and item["include"] not in added_includes
     ]
 
-    return uok_items + added_items + other_items
+    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))

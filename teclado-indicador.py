@@ -1182,6 +1182,104 @@ def uok_mate_layout_label(layout, variant=""):
 
 
 
+
+def uok_is_cinnamon_desktop():
+    desktop = " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+
+    return "cinnamon" in desktop
+
+
+def uok_libgnomekbd_system_sources():
+    """
+    Cinnamon guarda las distribuciones añadidas aquí:
+    org.gnome.libgnomekbd.keyboard layouts
+    """
+    if not uok_is_cinnamon_desktop():
+        return []
+
+    result = run_menu_cmd([
+        "gsettings",
+        "get",
+        "org.gnome.libgnomekbd.keyboard",
+        "layouts",
+    ])
+
+    if result.returncode != 0:
+        return []
+
+    raw_layouts = re.findall(r"'([^']+)'", result.stdout.strip())
+    out = []
+    seen = set()
+
+    for raw in raw_layouts:
+        raw = (raw or "").strip()
+
+        if not raw:
+            continue
+
+        if "+" in raw:
+            layout, variant = raw.split("+", 1)
+        elif "(" in raw and raw.endswith(")"):
+            layout, variant = raw[:-1].split("(", 1)
+        else:
+            layout, variant = raw, ""
+
+        layout = layout.strip()
+        variant = variant.strip()
+
+        if not layout:
+            continue
+
+        sid = layout if not variant else f"{layout}+{variant}"
+
+        if sid in seen:
+            continue
+
+        seen.add(sid)
+
+        out.append({
+            "kind": "xkb",
+            "id": sid,
+            "label": uok_mate_layout_label(layout, variant) if "uok_mate_layout_label" in globals() else sid,
+        })
+
+    return out
+
+
+def uok_merge_libgnomekbd_system_sources(rows):
+    extra = uok_libgnomekbd_system_sources()
+
+    if not extra:
+        return rows
+
+    seen = set()
+    merged = []
+
+    for row in extra:
+        key = row.get("id")
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        merged.append(row)
+
+    for row in rows:
+        key = row.get("id")
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        merged.append(row)
+
+    return merged
+
+
 def uok_mate_system_sources():
     """
     Devuelve solo las distribuciones configuradas en la sesión MATE actual.
@@ -1300,7 +1398,7 @@ def uok_mate_system_sources():
                 "label": uok_mate_layout_label(layout, variant),
             })
 
-    return out
+    return uok_merge_libgnomekbd_system_sources(out)
 
 
 
@@ -1432,11 +1530,176 @@ def uok_mate_append_system_sources_to_menu(menu):
     menu.append(Gtk.SeparatorMenuItem())
 
 
+
+# --------------------------------------------------------------------
+# UOK Cinnamon: system layouts from libgnomekbd
+# --------------------------------------------------------------------
+
+def uok_is_cinnamon_desktop():
+    desktop = " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+
+    return "cinnamon" in desktop
+
+
+def uok_cinnamon_layout_label(layout, variant=""):
+    labels = {
+        "es": "Español",
+        "de": "Alemán",
+        "us": "Inglés (EE. UU.)",
+        "gb": "Inglés (Reino Unido)",
+        "fr": "Francés",
+        "it": "Italiano",
+        "pt": "Portugués",
+        "br": "Portugués (Brasil)",
+    }
+
+    base = labels.get(layout, layout.upper())
+
+    if variant:
+        return f"{base} ({variant})"
+
+    return base
+
+
+def uok_cinnamon_system_sources():
+    """
+    Cinnamon guarda las distribuciones añadidas en:
+    org.gnome.libgnomekbd.keyboard layouts
+    """
+    if not uok_is_cinnamon_desktop():
+        return []
+
+    try:
+        result = run_menu_cmd([
+            "gsettings",
+            "get",
+            "org.gnome.libgnomekbd.keyboard",
+            "layouts",
+        ])
+    except Exception:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    rows = []
+    seen = set()
+
+    for raw in re.findall(r"'([^']+)'", result.stdout.strip()):
+        raw = (raw or "").strip()
+
+        if not raw:
+            continue
+
+        if "+" in raw:
+            layout, variant = raw.split("+", 1)
+        elif "(" in raw and raw.endswith(")"):
+            layout, variant = raw[:-1].split("(", 1)
+        else:
+            layout, variant = raw, ""
+
+        layout = layout.strip()
+        variant = variant.strip()
+
+        if not layout:
+            continue
+
+        sid = layout if not variant else f"{layout}+{variant}"
+
+        if sid in seen:
+            continue
+
+        seen.add(sid)
+
+        rows.append({
+            "kind": "xkb",
+            "id": sid,
+            "layout": layout,
+            "variant": variant,
+            "label": uok_cinnamon_layout_label(layout, variant),
+        })
+
+    return rows
+
+
+def uok_cinnamon_disable_keyd():
+    """
+    Al cambiar a una distribución del sistema, keyd no debe seguir aplicando
+    el perfil UOK anterior.
+    """
+    for cmd in [
+        ["sudo", "-n", "/usr/local/sbin/keyd-aplicar-conf", ""],
+        ["/usr/local/sbin/keyd-aplicar-conf", ""],
+    ]:
+        try:
+            result = run_menu_cmd(cmd)
+
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def uok_cinnamon_apply_system_source(row):
+    layout = row.get("layout") or row.get("id", "").split("+", 1)[0]
+    variant = row.get("variant", "")
+
+    if not layout:
+        return
+
+    uok_cinnamon_disable_keyd()
+
+    cmd = ["setxkbmap", layout]
+
+    if variant:
+        cmd += ["-variant", variant]
+
+    try:
+        result = run_menu_cmd(cmd)
+
+        if result.returncode != 0:
+            notify("UrOwnKeyboard", "No se pudo activar la distribución del sistema.")
+            return
+
+        notify("UrOwnKeyboard", f"Distribución activada: {row.get('label', layout)}")
+
+    except Exception as exc:
+        notify("UrOwnKeyboard", f"No se pudo activar la distribución: {exc}")
+
+
+def uok_cinnamon_append_system_sources_to_menu(menu):
+    if not uok_is_cinnamon_desktop():
+        return
+
+    rows = uok_cinnamon_system_sources()
+
+    if not rows:
+        return
+
+    menu.append(Gtk.SeparatorMenuItem())
+
+    title = Gtk.MenuItem(label="Distribuciones del sistema")
+    title.set_sensitive(False)
+    menu.append(title)
+
+    for row in rows:
+        item = Gtk.MenuItem(label=row.get("label", row.get("id", "")))
+        item.connect("activate", lambda _item, selected=row: uok_cinnamon_apply_system_source(selected))
+        menu.append(item)
+
+
 def crear_menu():
     menu = Gtk.Menu()
 
     sources = get_sources()
     uok_mate_append_system_sources_to_menu(menu)
+    uok_cinnamon_append_system_sources_to_menu(menu)
 
     for index, source in enumerate(sources):
         if len(source) != 2:
