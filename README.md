@@ -11,9 +11,7 @@ Incluye:
 - un editor visual de distribuciones XKB;
 - soporte para perfiles XKB propios;
 - soporte opcional para `keyd`;
-- integración con GNOME;
-- soporte para XFCE;
-- una extensión específica de GNOME para ocultar el indicador nativo de fuentes de entrada.
+- Extensiónes específicas para ocultar el indicador nativo de fuentes de entrada.
 
 ---
 
@@ -57,8 +55,7 @@ En **XFCE**, UrOwnKeyboard puede leer distribuciones añadidas desde la configur
 - Mostrar una vista completa de la configuración activa.
 - Usar un menú gráfico en la barra superior o panel.
 - Abrir la configuración de teclado del sistema desde el menú gráfico.
-- Ocultar el indicador nativo de teclado en GNOME.
-- Ocultar el indicador nativo/IBus en XFCE cuando sea posible.
+- Ocultar el indicador nativo/IBus en cuando sea posible.
 - Iniciarse automáticamente al iniciar sesión.
 
 ---
@@ -68,11 +65,25 @@ En **XFCE**, UrOwnKeyboard puede leer distribuciones añadidas desde la configur
 En Ubuntu, Debian y derivadas:
 
 ```bash
+sudo apt update
+sudo apt install -y git build-essential python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator fonts-noto-core fonts-noto-extra x11-xkb-utils fonts-noto-core fonts-noto-extra
+
+if ! command -v keyd >/dev/null 2>&1; then
+    cd /tmp
+    rm -rf keyd
+    git clone https://github.com/rvaiya/keyd.git
+    cd keyd
+    make
+    sudo make install
+    sudo systemctl enable --now keyd
+fi
+
 cd "$HOME"
 rm -rf UrOwnKeyboard
 git clone https://github.com/Oriesu/UrOwnKeyboard.git
 cd UrOwnKeyboard
 chmod +x install.sh uninstall.sh make-release.sh uok
+chmod +x install.sh uninstall.sh uok
 ./install.sh
 ```
 
