@@ -25,13 +25,13 @@ Estado de soporte:
 
 | Escritorio | Estado |
 |---|---|
-| GNOME | Soportado |
-| KDE Plasma | Soportado |
-| XFCE | Soportado |
-| MATE | Soportado |
-| Cinnamon | Soportado |
-| LXQt | Soportado |
-| Otros | Puede funcionar si soportan XKB y AppIndicator/Ayatana/StatusNotifier |
+| GNOME | Soportado (x11) |
+| KDE Plasma | Soportado (x11) |
+| XFCE | Soportado (x11)|
+| MATE | Soportado (x11)|
+| Cinnamon | Soportado (x11)|
+| LXQt | Soportado (x11)|
+| Otros | Puede funcionar si soportan XKB y AppIndicator/Ayatana/StatusNotifier (x11)|
 
 En **GNOME**, UrOwnKeyboard usa las fuentes de entrada de `gsettings`.
 
