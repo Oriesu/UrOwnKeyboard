@@ -5241,6 +5241,43 @@ def uok_hide_kde_ibus_native_menu():
     except Exception:
         return
 
+
+# UOK keyd backend delegation
+# This block must stay late in the file, after older keyd helper definitions.
+try:
+    from uok_backends import keyd as uok_keyd_backend
+
+    def aplicar_keyd_off_sync():
+        result = uok_keyd_backend.off()
+        if not result.ok:
+            try:
+                show_error(
+                    "UrOwnKeyboard - keyd",
+                    "No se pudo desactivar keyd. Se continuará si el backend lo permite.\n\n"
+                    + result.combined,
+                )
+            except Exception:
+                pass
+        return result.ok
+
+    def aplicar_keyd_de_profile_o_apagar(profile):
+        result = uok_keyd_backend.apply_profile_or_off(profile)
+        if not result.ok:
+            try:
+                show_error(
+                    "UrOwnKeyboard - keyd",
+                    "No se pudo aplicar keyd para este perfil.\n\n" + result.combined,
+                )
+            except Exception:
+                pass
+        return result.ok
+
+    def keyd_is_active():
+        return uok_keyd_backend.is_service_active()
+
+except Exception as exc:
+    print(f"UOK keyd backend delegation disabled: {exc}")
+
 # UOK backend overrides
 try:
     from uok_backends.overrides import install as uok_install_backend_overrides
