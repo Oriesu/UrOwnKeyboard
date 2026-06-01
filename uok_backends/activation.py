@@ -62,3 +62,36 @@ def activate_profile_transactional(profile, layout_apply, layout_verify, rollbac
         return ActivationResult.ok_result("Perfil aplicado con keyd.", applied_keyd=True)
 
     return ActivationResult.ok_result("Perfil aplicado sin keyd.", applied_keyd=False)
+
+
+def reset_gnome_wayland_to_safe_source(app, index=0, ibus_engine="xkb:es::spa"):
+    # Rollback conservador para estados incoherentes GNOME/IBus/keyd.
+    keyd.off()
+
+    try:
+        from . import gnome_wayland
+        gnome_wayland.set_current_index(index)
+    except Exception:
+        pass
+
+    try:
+        app.subprocess.run(
+            ["ibus", "engine", ibus_engine],
+            text=True,
+            stdout=app.subprocess.PIPE,
+            stderr=app.subprocess.PIPE,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+def block_custom_profile_in_gnome_wayland(app, profile):
+    reset_gnome_wayland_to_safe_source(app)
+
+    return ActivationResult.fail(
+        unsupported_gnome_wayland_message(profile)
+        + "\n\nNo se ha aplicado ni XKB ni keyd. "
+        "UOK ha vuelto a una fuente GNOME segura para evitar que el teclado quede incoherente.",
+        rolled_back=True,
+    )
