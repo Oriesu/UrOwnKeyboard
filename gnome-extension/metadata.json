@@ -1,7 +1,7 @@
 {
-  "uuid": "hide-input-source@teclado-indicador",
-  "name": "Hide GNOME Input Source Indicator",
-  "description": "Hides GNOME's native input source indicator.",
-  "shell-version": ["46"],
-  "version": 1
+  "uuid": "hide-input-source@urownkeyboard",
+  "name": "UrOwnKeyboard Hide Input Source Indicator",
+  "description": "Hide GNOME Shell native input source indicator and bridge GNOME Wayland input source switching for UrOwnKeyboard.",
+  "shell-version": ["42", "43", "44", "45", "46", "47", "48", "49"],
+  "version": 2
 }

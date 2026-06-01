@@ -5241,13 +5241,6 @@ def uok_hide_kde_ibus_native_menu():
     except Exception:
         return
 
-# UOK backend overrides
-try:
-    from uok_backends.overrides import install as uok_install_backend_overrides
-    uok_install_backend_overrides(__import__(__name__))
-except Exception as exc:
-    print(f'UOK backend overrides disabled: {exc}')
-
 uok_hide_kde_ibus_native_menu()
 ocultar_menu_xfce()
 sincronizar_estado_al_arrancar()

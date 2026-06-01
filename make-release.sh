@@ -37,6 +37,7 @@ copy_file uok_xkb_symbols.py
 copy_file uok_xkb_sources.py
 
 copy_dir helpers
+copy_dir uok_backends
 copy_dir gnome-extension
 
 if [ -f aplicar-editor-visual-uok.sh ]; then

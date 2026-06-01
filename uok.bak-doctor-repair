@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import os
 import argparse
 import hashlib
 import json
@@ -594,57 +593,6 @@ def _uok_compile_layout(layout):
     return ["xkbcli", "compile-keymap", "--layout", layout]
 
 
-
-def _uok_repair_command_for_xkb_registry():
-    """
-    Return a distro-specific command to reinstall the package that owns
-    the global XKB registry/rules files.
-    """
-    sudo = [] if os.geteuid() == 0 else ["sudo"]
-
-    if shutil.which("apt"):
-        return sudo + ["apt", "install", "--reinstall", "-y", "xkb-data"]
-
-    if shutil.which("dnf"):
-        return sudo + ["dnf", "reinstall", "-y", "xkeyboard-config"]
-
-    if shutil.which("pacman"):
-        return sudo + ["pacman", "-S", "--noconfirm", "xkeyboard-config"]
-
-    if shutil.which("zypper"):
-        return sudo + ["zypper", "install", "-f", "-y", "xkeyboard-config"]
-
-    return None
-
-
-def _uok_repair_xkb_registry(yes=False):
-    cmd = _uok_repair_command_for_xkb_registry()
-
-    if not cmd:
-        print("Automatic repair is not available for this distribution.")
-        print("Please reinstall the package that provides XKB data/rules.")
-        print()
-        print("Known examples:")
-        print("  Debian / Ubuntu: sudo apt install --reinstall -y xkb-data")
-        print("  Fedora:          sudo dnf reinstall -y xkeyboard-config")
-        print("  Arch:            sudo pacman -S xkeyboard-config")
-        print("  openSUSE:        sudo zypper install -f -y xkeyboard-config")
-        return False
-
-    print("Repair command:")
-    print("  " + " ".join(cmd))
-    print()
-
-    if not yes:
-        answer = input("Apply this repair now? [y/N] ").strip().lower()
-        if answer not in {"y", "yes", "s", "si", "sí"}:
-            print("Repair cancelled.")
-            return False
-
-    result = subprocess.run(cmd, check=False)
-    return result.returncode == 0
-
-
 def cmd_doctor(args):
     """
     Diagnose global XKB registry problems.
@@ -770,28 +718,6 @@ def cmd_doctor(args):
     print()
 
     if problems:
-        if getattr(args, "repair", False):
-            print("Problems found:")
-            for problem in problems:
-                print(f"  - {problem}")
-
-            print()
-            ok = _uok_repair_xkb_registry(yes=getattr(args, "yes", False))
-
-            if not ok:
-                print()
-                print("Repair did not complete.")
-                if not args.no_fail:
-                    raise SystemExit(2)
-                return
-
-            print()
-            print("Repair completed. Rechecking...")
-            print()
-
-            args.repair = False
-            return cmd_doctor(args)
-
         print("Problems found:")
         for problem in problems:
             print(f"  - {problem}")
@@ -881,17 +807,6 @@ Command-specific help:
         "--no-fail",
         action="store_true",
         help="Print problems but return success",
-    )
-    p.add_argument(
-        "--repair",
-        action="store_true",
-        help="Try to repair global XKB registry problems by reinstalling the system XKB data package",
-    )
-    p.add_argument(
-        "-y",
-        "--yes",
-        action="store_true",
-        help="Do not ask for confirmation when used with --repair",
     )
     p.set_defaults(func=cmd_doctor)
 

@@ -20,3 +20,6 @@ sudo rm -f /usr/local/sbin/keyd-aplicar-conf
 sudo rm -f /etc/sudoers.d/teclado-indicador-keyd
 
 echo "Uninstalled. Imported configurations in ~/.config/teclado-indicador were not deleted."
+
+# UOK backend modules
+rm -rf "$HOME/.local/bin/uok_backends" 2>/dev/null || true

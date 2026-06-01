@@ -6,7 +6,7 @@ EXT_UUID="hide-input-source@teclado-indicador"
 
 echo "Installing dependencias..."
 sudo apt update
-sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator x11-xkb-utils xkb-data libxml2-utils libxkbcommon-tools fonts-noto-core fonts-noto-extra xfconf
+sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator x11-xkb-utils fonts-noto-core fonts-noto-extra xfconf
 
 if ! command -v keyd >/dev/null 2>&1; then
     echo "keyd is not installed. Installing keyd..."
@@ -49,10 +49,7 @@ mkdir -p "$HOME/.xkb/symbols"
 mkdir -p "$HOME/.config/autostart"
 
 echo "Checking Python files..."
-python3 -m py_compile teclado-indicador.py uok-layout-editor.py uok_xkb_symbols.py uok_xkb_sources.py uok
-
-echo "Checking global XKB registry..."
-python3 uok doctor --system-only
+python3 -m py_compile teclado-indicador.py uok-layout-editor.py uok_xkb_symbols.py uok_xkb_sources.py
 
 echo "Installing indicator..."
 cp teclado-indicador.py "$HOME/.local/bin/teclado-indicador.py"
