@@ -5244,6 +5244,42 @@ def uok_hide_kde_ibus_native_menu():
 
 
 
+
+# UOK X11 helper backend delegation
+# This block must stay late in the file, after older XKB helper definitions.
+try:
+    from uok_backends.session import is_wayland as uok_session_is_wayland
+    from uok_backends import x11 as uok_x11_backend
+
+    def raw_xkb_layout():
+        # setxkbmap is not a reliable source in Wayland/Xwayland.
+        # Returning empty here avoids using X11 state as truth in Wayland.
+        if uok_session_is_wayland():
+            return ""
+
+        spec = uok_x11_backend.current_spec()
+
+        if "(" in spec and spec.endswith(")"):
+            layout, variant = spec[:-1].split("(", 1)
+            return f"{layout}+{variant}"
+
+        return spec
+
+    def get_raw_setxkbmap_spec():
+        if uok_session_is_wayland():
+            return ""
+
+        return uok_x11_backend.current_spec()
+
+    def gnome_source_to_setxkbmap_cmd(source_type, source_id):
+        return uok_x11_backend.source_to_setxkbmap_cmd(source_type, source_id) or ""
+
+    def expected_source_spec(source_id):
+        return (source_id or "").strip()
+
+except Exception as exc:
+    print(f"UOK X11 helper backend delegation disabled: {exc}")
+
 # UOK keyd backend delegation
 # This block must stay late in the file, after older keyd helper definitions.
 try:
