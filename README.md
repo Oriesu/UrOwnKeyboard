@@ -60,6 +60,26 @@ En **XFCE**, UrOwnKeyboard puede leer distribuciones añadidas desde la configur
 
 ---
 
+## GNOME Wayland support
+
+UrOwnKeyboard supports GNOME Wayland for normal system input sources, such as the layouts configured in GNOME Settings.
+
+Supported in GNOME Wayland:
+
+- Switching between GNOME system XKB sources, for example `es`, `de`, `us`, etc.
+- Keeping `keyd` neutral when a normal GNOME source is selected.
+- Blocking custom UOK XKB profiles safely when they cannot be applied to the real Wayland compositor.
+
+Not supported yet in GNOME Wayland:
+
+- Applying custom UOK XKB profiles generated/imported by UrOwnKeyboard through `setxkbmap`, `xkbcomp` or `~/.xkb`.
+- Applying the profile-specific `keyd` mapping when the corresponding custom XKB layout could not be verified.
+
+This limitation is intentional. In GNOME Wayland, `setxkbmap` may only affect Xwayland and does not reliably change the real Mutter/Wayland keyboard layout. For that reason, UrOwnKeyboard blocks custom profiles in GNOME Wayland instead of applying only the `keyd` part and leaving the keyboard incoherent.
+
+To use custom UOK profiles, use a GNOME X11 session or another supported X11 desktop.
+
+
 ## Instalación rápida
 
 En Ubuntu, Debian y derivadas:
