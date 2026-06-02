@@ -491,31 +491,6 @@ def merge_libgnomekbd_keyboard_layouts_added(items):
     return merged
 
 
-def load_xkb_sources(current_profile_file, profiles_dir):
-    uok_items = read_uok_profiles(profiles_dir)
-    added_items = read_added_sources()
-    system_items = parse_system_xkb_sources()
-
-    added_source_ids = {item["source_id"] for item in added_items}
-    added_includes = {item["include"] for item in added_items}
-
-    # Mejorar etiquetas de "Added to system" usando la descripción de evdev.xml.
-    system_by_source_id = {item["source_id"]: item for item in system_items}
-    system_by_include = {item["include"]: item for item in system_items}
-
-    for item in added_items:
-        match = system_by_source_id.get(item["source_id"]) or system_by_include.get(item["include"])
-        if match:
-            item["label"] = match["label"]
-            item["description"] = match["description"]
-
-    other_items = [
-        item
-        for item in system_items
-        if item["source_id"] not in added_source_ids and item["include"] not in added_includes
-    ]
-
-    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 # --------------------------------------------------------------------
@@ -652,30 +627,6 @@ def uok_read_added_sources():
     return uok_unique_added_items(uok_read_gnome_added_sources())
 
 
-def load_xkb_sources(current_profile_file, profiles_dir):
-    uok_items = read_uok_profiles(profiles_dir)
-    added_items = uok_read_added_sources()
-    system_items = parse_system_xkb_sources()
-
-    added_source_ids = {item["source_id"] for item in added_items}
-    added_includes = {item["include"] for item in added_items}
-
-    system_by_source_id = {item["source_id"]: item for item in system_items}
-    system_by_include = {item["include"]: item for item in system_items}
-
-    for item in added_items:
-        match = system_by_source_id.get(item["source_id"]) or system_by_include.get(item["include"])
-        if match:
-            item["label"] = match["label"]
-            item["description"] = match["description"]
-
-    other_items = [
-        item
-        for item in system_items
-        if item["source_id"] not in added_source_ids and item["include"] not in added_includes
-    ]
-
-    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 
@@ -906,30 +857,6 @@ def uok_read_added_sources():
     return uok_unique_added_items(read_gnome_added_sources())
 
 
-def load_xkb_sources(current_profile_file, profiles_dir):
-    uok_items = read_uok_profiles(profiles_dir)
-    added_items = uok_read_added_sources()
-    system_items = parse_system_xkb_sources()
-
-    added_source_ids = {item["source_id"] for item in added_items}
-    added_includes = {item["include"] for item in added_items}
-
-    system_by_source_id = {item["source_id"]: item for item in system_items}
-    system_by_include = {item["include"]: item for item in system_items}
-
-    for item in added_items:
-        match = system_by_source_id.get(item["source_id"]) or system_by_include.get(item["include"])
-        if match:
-            item["label"] = match["label"]
-            item["description"] = match["description"]
-
-    other_items = [
-        item
-        for item in system_items
-        if item["source_id"] not in added_source_ids and item["include"] not in added_includes
-    ]
-
-    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 
@@ -1146,30 +1073,6 @@ def uok_read_added_sources():
     return uok_unique_added_items(read_gnome_added_sources())
 
 
-def load_xkb_sources(current_profile_file, profiles_dir):
-    uok_items = read_uok_profiles(profiles_dir)
-    added_items = uok_read_added_sources()
-    system_items = parse_system_xkb_sources()
-
-    added_source_ids = {item["source_id"] for item in added_items}
-    added_includes = {item["include"] for item in added_items}
-
-    system_by_source_id = {item["source_id"]: item for item in system_items}
-    system_by_include = {item["include"]: item for item in system_items}
-
-    for item in added_items:
-        match = system_by_source_id.get(item["source_id"]) or system_by_include.get(item["include"])
-        if match:
-            item["label"] = match["label"]
-            item["description"] = match["description"]
-
-    other_items = [
-        item
-        for item in system_items
-        if item["source_id"] not in added_source_ids and item["include"] not in added_includes
-    ]
-
-    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 
@@ -1249,39 +1152,6 @@ def uok_v5_sources_from_gnome():
     return read_gnome_added_sources()
 
 
-def load_xkb_sources(current_profile_file, profiles_dir):
-    uok_items = read_uok_profiles(profiles_dir)
-
-    if uok_v5_sources_is_xfce():
-        added_items = []
-        added_items.extend(uok_v5_sources_from_keyboard_layout())
-        added_items.extend(uok_v5_sources_from_setxkbmap())
-        added_items.extend(uok_v5_sources_from_gnome())
-        added_items = uok_v5_sources_unique(added_items)
-    else:
-        added_items = read_gnome_added_sources()
-
-    system_items = parse_system_xkb_sources()
-
-    added_source_ids = {item["source_id"] for item in added_items}
-    added_includes = {item["include"] for item in added_items}
-
-    system_by_source_id = {item["source_id"]: item for item in system_items}
-    system_by_include = {item["include"]: item for item in system_items}
-
-    for item in added_items:
-        match = system_by_source_id.get(item["source_id"]) or system_by_include.get(item["include"])
-        if match:
-            item["label"] = match["label"]
-            item["description"] = match["description"]
-
-    other_items = [
-        item
-        for item in system_items
-        if item["source_id"] not in added_source_ids and item["include"] not in added_includes
-    ]
-
-    return merge_libgnomekbd_keyboard_layouts_added(merge_gnome_input_sources_added(uok_items + added_items + other_items))
 
 
 
