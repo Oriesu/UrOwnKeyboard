@@ -1,4 +1,13 @@
-import shlex
+#!/usr/bin/env python3
+from pathlib import Path
+import py_compile
+
+ROOT = Path.cwd()
+BACKENDS = ROOT / "uok_backends"
+X11 = BACKENDS / "x11.py"
+INDICATOR = ROOT / "teclado-indicador.py"
+
+X11_PY = '''import shlex
 import subprocess
 from .result import ActivationResult
 
@@ -83,7 +92,7 @@ def apply_source(source_type, source_id):
     if result.returncode != 0:
         return ActivationResult.fail(
             "No se pudo aplicar setxkbmap.",
-            (result.stdout + "\n" + result.stderr).strip(),
+            (result.stdout + "\\n" + result.stderr).strip(),
         )
 
     return ActivationResult.ok_result("Fuente X11 aplicada.")
@@ -131,7 +140,34 @@ def rollback_default(layout="es"):
     if result.returncode != 0:
         return ActivationResult.fail(
             "No se pudo restaurar layout X11.",
-            (result.stdout + "\n" + result.stderr).strip(),
+            (result.stdout + "\\n" + result.stderr).strip(),
         )
 
     return ActivationResult.ok_result("Rollback X11 aplicado.")
+'''
+
+
+def main():
+    if not BACKENDS.exists():
+        raise SystemExit("No existe uok_backends.")
+    if not INDICATOR.exists():
+        raise SystemExit("Ejecuta el script en la raíz de UrOwnKeyboard.")
+
+    X11.write_text(X11_PY, encoding="utf-8")
+    py_compile.compile(str(X11), doraise=True)
+    py_compile.compile(str(INDICATOR), doraise=True)
+
+    print("OK: uok_backends/x11.py preparado con helpers reales de X11.")
+    print("No se ha modificado teclado-indicador.py todavía.")
+    print()
+    print("Comprueba con:")
+    print("  python3 -m py_compile teclado-indicador.py uok_backends/*.py uok")
+    print("  python3 - <<'PY'")
+    print("from uok_backends import x11")
+    print("print('layout=', x11.current_layout())")
+    print("print('spec=', x11.current_spec())")
+    print("PY")
+
+
+if __name__ == "__main__":
+    main()
