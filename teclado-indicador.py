@@ -5336,6 +5336,72 @@ try:
 except Exception as exc:
     print(f"UOK keyd backend delegation disabled: {exc}")
 
+
+# UOK GNOME Wayland activation backend delegation
+# This block must stay late, after older activar_gnome_source() definitions
+# and after keyd delegation, but before uok_backends.overrides.install().
+try:
+    from uok_backends.session import is_gnome_wayland as uok_is_gnome_wayland_activation
+    from uok_backends import gnome_wayland as uok_gnome_wayland_backend
+
+    __uok_pre_backend_activar_gnome_source = activar_gnome_source
+
+    def activar_gnome_source(index, source_type, source_id):
+        if not uok_is_gnome_wayland_activation():
+            return __uok_pre_backend_activar_gnome_source(index, source_type, source_id)
+
+        label = source_label(source_type, source_id)
+
+        if source_type != "xkb":
+            show_error(
+                "UrOwnKeyboard - GNOME Wayland",
+                "Esta fuente no es XKB y todavía no está soportada en GNOME Wayland.",
+            )
+            return
+
+        # Nunca dejar keyd activo al volver a una fuente normal del sistema.
+        if not aplicar_keyd_off_sync():
+            return
+
+        if not uok_gnome_wayland_backend.set_current_index(index):
+            show_error(
+                "UrOwnKeyboard - GNOME Wayland",
+                "No se pudo cambiar la fuente de entrada de GNOME.",
+            )
+            return
+
+        try:
+            from uok_backends.overrides import _force_ibus_engine
+            _force_ibus_engine(__import__(__name__), source_type, source_id)
+        except Exception:
+            pass
+
+        if not uok_gnome_wayland_backend.verify_index(index):
+            show_error(
+                "UrOwnKeyboard - verificación",
+                "GNOME no cambió al índice esperado. "
+                f"Esperado: {index}. Actual: {uok_gnome_wayland_backend.current_index()}",
+            )
+            return
+
+        current = {
+            "type": "gnome-source",
+            "name": label,
+            "source_type": source_type,
+            "source_id": source_id,
+            "desktop": "gnome-wayland",
+            "keyd_conf": None,
+        }
+
+        CURRENT_PROFILE.write_text(
+            json.dumps(current, indent=2, ensure_ascii=False)
+        )
+
+        notify("Keyboard", label + " activated")
+
+except Exception as exc:
+    print(f"UOK GNOME Wayland activation delegation disabled: {exc}")
+
 # UOK backend overrides
 try:
     from uok_backends.overrides import install as uok_install_backend_overrides
