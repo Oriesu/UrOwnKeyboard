@@ -44,3 +44,4 @@ build/
 
 # Archivos generados por instalación local, si alguna vez aparecen en el repo
 teclado-indicador.desktop
+dev/backups/
