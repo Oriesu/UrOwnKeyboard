@@ -138,7 +138,39 @@ def install(app):
         # La política de bloqueo ya vive en activation.py.
         if is_gnome_wayland() and profile_is_custom_xkb(profile):
             result = block_custom_profile_in_gnome_wayland(app, profile)
-            app.show_error("UrOwnKeyboard - GNOME Wayland", result.message)
+            title = "UrOwnKeyboard - GNOME Wayland"
+            short = "Configuraciones propias bloqueadas en GNOME Wayland"
+            message = result.message
+
+            # Aviso persistente/visible: algunos lanzadores de AppIndicator no
+            # muestran zenity de forma fiable en Wayland, así que usamos también
+            # notify/notify-send y dejamos traza en stdout.
+            try:
+                app.notify("UrOwnKeyboard", short)
+            except Exception:
+                pass
+
+            try:
+                app.subprocess.run(
+                    ["notify-send", title, message],
+                    text=True,
+                    stdout=app.subprocess.PIPE,
+                    stderr=app.subprocess.PIPE,
+                    check=False,
+                )
+            except Exception:
+                pass
+
+            try:
+                app.show_error(title, message)
+            except Exception:
+                pass
+
+            try:
+                print(f"{title}: {message}")
+            except Exception:
+                pass
+
             return
 
         return base_activar_profile(profile)
