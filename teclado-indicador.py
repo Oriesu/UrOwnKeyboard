@@ -5245,6 +5245,26 @@ def uok_hide_kde_ibus_native_menu():
 
 
 
+
+# UOK GNOME Wayland system sources backend delegation
+# This block must stay late in the file, after older get_sources() definitions.
+try:
+    from uok_backends.session import is_gnome_wayland as uok_is_gnome_wayland
+    from uok_backends import system_sources as uok_system_sources
+
+    __uok_pre_backend_get_sources = get_sources
+
+    def get_sources():
+        # In GNOME Wayland, setxkbmap/IBus are not reliable sources of truth.
+        # Use only GNOME's configured input sources.
+        if uok_is_gnome_wayland():
+            return uok_system_sources.current_sources()
+
+        return __uok_pre_backend_get_sources()
+
+except Exception as exc:
+    print(f"UOK GNOME Wayland system sources delegation disabled: {exc}")
+
 # UOK X11 helper backend delegation
 # This block must stay late in the file, after older XKB helper definitions.
 try:
