@@ -1,67 +1,51 @@
 #!/usr/bin/env bash
 set -uo pipefail
-
 TARGET="/etc/keyd/default.conf"
 BACKUP="/etc/keyd/default.conf.uok-backup"
 NEUTRAL="$(mktemp)"
-
 cleanup() {
   rm -f "$NEUTRAL"
 }
 trap cleanup EXIT
-
 cat > "$NEUTRAL" <<'NEUTRAL_CONF'
 [ids]
 *
 
 [main]
 NEUTRAL_CONF
-
 fail_restore() {
   echo "ERROR: keyd.conf could not be applied. Previous keyd configuration restored." >&2
-
   if [ -f "$BACKUP" ]; then
     cp "$BACKUP" "$TARGET"
   else
     cp "$NEUTRAL" "$TARGET"
   fi
-
   timeout 8s systemctl restart keyd >/dev/null 2>&1 || true
-
   echo >&2
   echo "=== keyd status ===" >&2
   systemctl status keyd --no-pager >&2 || true
-
   echo >&2
   echo "=== keyd journal ===" >&2
   journalctl -u keyd -n 80 --no-pager >&2 || true
-
   exit 1
 }
-
 mkdir -p /etc/keyd
-
 if [ -f "$TARGET" ]; then
   cp "$TARGET" "$BACKUP"
 fi
-
 if [ "${1:-}" = "--off" ]; then
   cp "$NEUTRAL" "$TARGET"
 else
   SRC="${1:-}"
-
   if [ -z "$SRC" ]; then
     echo "ERROR: missing keyd.conf path." >&2
     exit 1
   fi
-
   SRC_REAL="$(readlink -f "$SRC" 2>/dev/null || true)"
-
   if [ -z "$SRC_REAL" ] || [ ! -f "$SRC_REAL" ]; then
     echo "ERROR: keyd.conf does not exist: $SRC" >&2
     exit 1
   fi
-
   case "$SRC_REAL" in
     /home/*/.config/teclado-indicador/keyd/*.conf|/root/.config/teclado-indicador/keyd/*.conf)
       ;;
@@ -73,22 +57,17 @@ else
 
   cp "$SRC_REAL" "$TARGET"
 fi
-
 if ! timeout 8s systemctl restart keyd >/tmp/uok-keyd-systemctl.out 2>/tmp/uok-keyd-systemctl.err; then
   cat /tmp/uok-keyd-systemctl.out >&2 2>/dev/null || true
   cat /tmp/uok-keyd-systemctl.err >&2 2>/dev/null || true
   fail_restore
 fi
-
 sleep 0.3
-
 if ! systemctl is-active --quiet keyd; then
   fail_restore
 fi
-
 if [ ! -S /run/keyd.socket ] && [ ! -S /var/run/keyd.socket ]; then
   echo "ERROR: keyd socket was not created." >&2
   fail_restore
 fi
-
 exit 0

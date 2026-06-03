@@ -1,12 +1,8 @@
 #!/bin/bash
 set -e
-
 EXT_UUID="hide-input-source@teclado-indicador"
-
 pkill -f teclado-indicador.py || true
-
 gnome-extensions disable "$EXT_UUID" 2>/dev/null || true
-
 rm -f "$HOME/.local/bin/teclado-indicador.py"
 rm -f "$HOME/.local/bin/uok"
 rm -f "$HOME/.local/bin/uok-layout-editor.py"
@@ -15,11 +11,8 @@ rm -f "$HOME/.local/bin/uok_xkb_sources.py"
 rm -f "$HOME/.local/bin/uok-indicator-start"
 rm -f "$HOME/.config/autostart/teclado-indicador.desktop"
 rm -rf "$HOME/.local/share/gnome-shell/extensions/$EXT_UUID"
-
 sudo rm -f /usr/local/sbin/keyd-aplicar-conf
 sudo rm -f /etc/sudoers.d/teclado-indicador-keyd
-
 echo "Uninstalled. Imported configurations in ~/.config/teclado-indicador were not deleted."
-
 # UOK backend modules
 rm -rf "$HOME/.local/bin/uok_backends" 2>/dev/null || true
