@@ -81,6 +81,8 @@ def _open_lxqt_keyboard_settings(app, base_open_keyboard_settings, _item=None):
     app.notify("UrOwnKeyboard","No se pudo abrir la configuración de teclado de LXQt.")
 
 def install(app):
+    if not _is_lxqt():
+        return None
     base_open_keyboard_settings = getattr(app, "abrir_ajustes_teclado", None)
 
     def abrir_ajustes_teclado(_item=None):

@@ -38,9 +38,20 @@ DISPLAY_TO_KEYSYM.update({
     "Lvl5":"ISO_Level5_Shift","Lvl5⇧":"ISO_Level5_Latch","Lvl5⇩":"ISO_Level5_Lock","´":"dead_acute","`":"dead_grave","^":"dead_circumflex",
     "¨":"dead_diaeresis","~":"dead_tilde","¯":"dead_macron","˘":"dead_breve","˙":"dead_abovedot","˚":"dead_abovering","˝":"dead_doubleacute",
     "ˇ":"dead_caron","¸":"dead_cedilla","˛":"dead_ogonek","◌a":"dead_a","◌A":"dead_A","◌e":"dead_e","◌E":"dead_E","◌i":"dead_i","◌I":"dead_I",
-    "◌o":"dead_o","◌O":"dead_O","◌u":"dead_u","◌U":"dead_U","◌ə":"dead_schwa","◌Ə":"dead_SCHWA","◌̣":"dead_belowdot","◌̦":"dead_belowcomma"})
+    "◌o":"dead_o","◌O":"dead_O","◌u":"dead_u","◌U":"dead_U","◌ə":"dead_schwa","◌Ə":"dead_SCHWA","◌̣":"dead_belowdot","◌̦":"dead_belowcomma",
+    # Raw punctuation must be serialized as XKB keysym names. In particular
+    # '<' and '>' cannot appear literally inside a symbols list because XKB
+    # parses '<...>' as a key-code literal.
+    "<":"less",">":"greater","[":"bracketleft","]":"bracketright","{":"braceleft","}":"braceright",
+    "\\":"backslash","|":"bar","/":"slash","?":"question","!":"exclam","@":"at","#":"numbersign",
+    "$":"dollar","%":"percent","&":"ampersand","*":"asterisk","(":"parenleft",")":"parenright",
+    "=":"equal","+":"plus","-":"minus","_":"underscore",":":"colon",";":"semicolon",
+    "'":"apostrophe",'"':"quotedbl",",":"comma",".":"period"})
 DISPLAY_TO_KEYSYM.update({display: name for name, display in _COMBINING_DISPLAYS.items()})
 DISPLAY_TO_KEYSYM.update({_display: f"braille_dot_{_dot}" for _dot, _display in _BRAILLE_DOT_DISPLAY.items()})
+
+SPECIAL_KEYSYMS = ["","NoSymbol","Tab","ISO_Left_Tab","BackSpace","Return","Escape","Delete","Insert","Home","End","Prior","Next","Left","Right","Up",
+    "Down","space","Caps_Lock","Shift_L","Shift_R","Control_L","Control_R","Alt_L","Alt_R","Super_L","Super_R","Menu","ISO_Level3_Shift","Multi_key"]
 
 def unicode_keysym_to_char(sym):
     sym = (sym or "").strip()
@@ -122,4 +133,4 @@ def text_to_keysym(value):
         return f"U{ord(value):04X}"
     return value
 
-__all__ = ["COMBINING_DOTTED_CIRCLE","KEYSYM_TO_DISPLAY","DISPLAY_TO_KEYSYM","unicode_keysym_to_char","maybe_visible_combining_char","keysym_to_text","text_to_keysym"]
+__all__ = ["COMBINING_DOTTED_CIRCLE","KEYSYM_TO_DISPLAY","DISPLAY_TO_KEYSYM","SPECIAL_KEYSYMS","unicode_keysym_to_char","maybe_visible_combining_char","keysym_to_text","text_to_keysym"]

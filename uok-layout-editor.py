@@ -15,13 +15,20 @@ import ctypes
 import json
 import subprocess
 import tempfile
+import sys
 from pathlib import Path
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk
-from uok_xkb_symbols import keysym_to_text, text_to_keysym
+from uok_xkb_symbols import keysym_to_text, text_to_keysym, SPECIAL_KEYSYMS
 from uok_xkb_sources import load_xkb_sources, source_id_to_include, layout_label
 from uok_backends.session import desktop_text
+
+HOME = Path.home()
+CONFIG = HOME / ".config" / "teclado-indicador"
+CURRENT_PROFILE = CONFIG / "current-profile.json"
+USER_XKB = HOME / ".xkb" / "symbols"
+KEYD_DIR = CONFIG / "keyd"
 
 def uok_editor_mate_layouts_from_gsettings():
     desktop = desktop_text()
@@ -78,16 +85,6 @@ def uok_editor_merge_mate_gsettings_layouts(source_items):
 
 LEVEL_NAMES = ["Normal","Shift","AltGr","AltGr + Shift"]
 
-SPECIAL_KEYSYMS = ["","NoSymbol","Tab","ISO_Left_Tab","BackSpace","Return","Escape","Delete","Insert","Home","End","Prior","Next","Left","Right","Up",
-    "Down","space","Caps_Lock","Shift_L","Shift_R","Control_L","Control_R","Alt_L","Alt_R","Super_L","Super_R","Menu" "ISO_Level3_Shift","Multi_key"]
-HOME = Path.home()
-CONFIG = HOME / ".config" / "teclado-indicador"
-CURRENT_PROFILE = CONFIG / "current-profile.json"
-USER_XKB = HOME / ".xkb" / "symbols"
-KEYSYM_DISPLAY = {"space":"Space","adiaeresis":"ä","Adiaeresis":"Ä","odiaeresis":"ö","Odiaeresis":"Ö","udiaeresis":"ü","Udiaeresis":"Ü","ssharp":"ß",
-    "section":"§","degree":"°","dead_acute":"´","dead_grave":"`","dead_circumflex":"^","dead_diaeresis":"¨","dead_tilde":"~","minus":"-","plus":"+",
-    "equal":"=","slash":"/","backslash":"\\","bar":"|","comma":",","period":".","semicolon":";","colon":":","apostrophe":"'","quotedbl":'"',"exclam":"!",
-    "question":"?","parenleft":"(","parenright":")","bracketleft":"[","bracketright":"]","braceleft":"{","braceright":"}","less":"<","greater":">"}
 LAYOUT_ROWS = [[("ESC","Esc",1.0),("TLDE","º",1.0),("AE01","1",1.0),("AE02","2",1.0),("AE03","3",1.0),("AE04","4",1.0),("AE05","5",1.0),("AE06","6",1.0),
         ("AE07","7",1.0),("AE08","8",1.0),("AE09","9",1.0),("AE10","0",1.0),("AE11","'",1.0),("AE12","¡",1.0),("BKSP","⌫",1.6)],
     [("TAB","Tab",1.4),("AD01","Q",1.0),("AD02","W",1.0),("AD03","E",1.0),("AD04","R",1.0),("AD05","T",1.0),("AD06","Y",1.0),("AD07","U",1.0),
@@ -355,9 +352,14 @@ def current_symbols_text():
     # para editar necesitamos el mapa resuelto completo.
     if profile and profile.get("type") == "imported-profile":
         profile_id = profile.get("id", "")
-        text = xkb_dump_from_include(profile_id)
-        if text:
-            return text
+        # En GNOME Wayland el perfil visible UOK se implementa como una fuente
+        # técnica del sistema. Para mostrar la imagen/teclas reales, probar ese
+        # ID primero; si no existe, caer al perfil y finalmente al archivo XKB.
+        for include in (profile.get("system_xkb_id"), profile_id):
+            if include:
+                text = xkb_dump_from_include(include)
+                if text:
+                    return text
         xkb_file = profile.get("xkb_file")
         if xkb_file:
             path = Path(xkb_file).expanduser()
@@ -1833,17 +1835,44 @@ class UokLayoutEditor(Gtk.Window):
         temp_dir = Path(tempfile.mkdtemp(prefix="uok-visual-"))
         xkb_file = temp_dir / "symbols"
         xkb_file.write_text(content, encoding="utf-8")
-        cmd = ["uok","import","--name",name,"--xkb",str(xkb_file)]
+        local_uok = Path(__file__).resolve().with_name("uok")
+        if local_uok.exists():
+            cmd = [sys.executable, str(local_uok), "import", "--name", name, "--xkb", str(xkb_file)]
+        else:
+            cmd = ["uok", "import", "--name", name, "--xkb", str(xkb_file)]
         keyd_content = self.build_keyd_conf()
         if keyd_content:
             keyd_file = temp_dir / "keyd.conf"
             keyd_file.write_text(keyd_content, encoding="utf-8")
             cmd.extend(["--keyd", str(keyd_file)])
         result = subprocess.run(cmd,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        raw_lines = []
+        for part in (result.stdout, result.stderr):
+            if part:
+                raw_lines.extend(line.strip() for line in part.splitlines() if line.strip())
+        wayland_notice = any(
+            "GNOME Wayland" in line or "logging out" in line or "cerrar sesión" in line
+            for line in raw_lines
+        )
+        # Avoid showing the same Wayland warning twice: uok import may print it,
+        # and the editor also needs to present it as a localized dialog.
+        filtered_lines = [
+            line for line in raw_lines
+            if not ("GNOME Wayland" in line and ("logging out" in line or "cerrar sesión" in line))
+        ]
+        combined = "\n".join(filtered_lines)
         if result.returncode != 0:
-            self.message("No se pudo importar", result.stderr or result.stdout, Gtk.MessageType.ERROR)
+            self.message("No se pudo importar", combined or "Error desconocido", Gtk.MessageType.ERROR)
             return
-        self.message("Layout importado", result.stdout.strip() or "Configuración importada correctamente.")
+        if wayland_notice:
+            base = combined or "Configuración importada correctamente."
+            self.message(
+                "Layout importado - GNOME Wayland",
+                base + "\n\nSi es la primera vez que usas esta distribución en GNOME Wayland, cierra sesión y vuelve a entrar antes de probarla.",
+                Gtk.MessageType.WARNING,
+            )
+        else:
+            self.message("Layout importado", combined or "Configuración importada correctamente.")
 
 def main():
     css = b"""

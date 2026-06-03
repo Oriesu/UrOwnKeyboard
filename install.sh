@@ -41,6 +41,9 @@ mkdir -p "$HOME/.xkb/symbols"
 mkdir -p "$HOME/.config/autostart"
 echo "Checking Python files..."
 python3 -m py_compile teclado-indicador.py uok-layout-editor.py uok_xkb_symbols.py uok_xkb_sources.py uok
+if [ -d uok_backends ]; then
+    find uok_backends -type f -name "*.py" -exec python3 -m py_compile {} \;
+fi
 echo "Checking global XKB registry..."
 python3 uok doctor --system-only
 echo "Installing indicator..."
@@ -51,6 +54,10 @@ cp uok-layout-editor.py "$HOME/.local/bin/uok-layout-editor.py"
 chmod +x "$HOME/.local/bin/uok-layout-editor.py"
 cp uok_xkb_symbols.py "$HOME/.local/bin/uok_xkb_symbols.py"
 cp uok_xkb_sources.py "$HOME/.local/bin/uok_xkb_sources.py"
+if [ -d uok_backends ]; then
+    rm -rf "$HOME/.local/bin/uok_backends"
+    cp -r uok_backends "$HOME/.local/bin/uok_backends"
+fi
 chmod +x "$HOME/.local/bin/uok"
 echo "Installing helper..."
 sudo cp helpers/keyd-aplicar-conf /usr/local/sbin/keyd-aplicar-conf

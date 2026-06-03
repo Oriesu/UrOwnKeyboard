@@ -37,7 +37,6 @@ if [ -f aplicar-editor-visual-uok.sh ]; then
     cp aplicar-editor-visual-uok.sh "$PKG_DIR/"
 fi
 find "$PKG_DIR" -type f -name "*.py" -exec python3 -m py_compile {} \;
-python3 -m py_compile "$PKG_DIR/teclado-indicador.py" "$PKG_DIR/uok-layout-editor.py" "$PKG_DIR/uok_xkb_symbols.py" "$PKG_DIR/uok_xkb_sources.py"
 bash -n "$PKG_DIR/install.sh"
 bash -n "$PKG_DIR/uninstall.sh"
 if [ -f "$PKG_DIR/helpers/keyd-aplicar-conf" ]; then

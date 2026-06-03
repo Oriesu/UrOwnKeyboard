@@ -20,6 +20,8 @@ def _open_cinnamon_keyboard_settings(app, base_open_keyboard_settings, _item=Non
     app.notify("UrOwnKeyboard","No se pudo abrir la configuración de teclado de Cinnamon.")
 
 def install(app):
+    if not _is_cinnamon():
+        return None
     base_open_keyboard_settings = getattr(app, "abrir_ajustes_teclado", None)
     base_hide_xfce_menu = getattr(app, "ocultar_menu_xfce", None)
 

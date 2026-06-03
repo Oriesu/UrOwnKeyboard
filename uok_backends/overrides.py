@@ -1,7 +1,6 @@
 from .session import is_gnome_wayland
 from . import gnome_wayland
 from .profiles import profile_is_custom_xkb
-from .activation import block_custom_profile_in_gnome_wayland
 
 IBUS_ENGINE_BY_XKB = {"es":"xkb:es::spa","de":"xkb:de::ger","us":"xkb:us::eng","gb":"xkb:gb::eng","fr":"xkb:fr::fra","it":"xkb:it::ita","pt":"xkb:pt::por"}
 
@@ -37,31 +36,6 @@ def _force_ibus_engine(app, source_type, source_id):
 
 def _fake_completed(app, cmd, returncode=0):
     return app.subprocess.CompletedProcess(cmd,returncode,stdout="",stderr="")
-
-def _show_blocked_profile_warning(app, profile):
-    result = block_custom_profile_in_gnome_wayland(app, profile)
-    title = "UrOwnKeyboard - GNOME Wayland"
-    short = "Configuraciones propias bloqueadas en GNOME Wayland"
-    message = result.message
-    # Aviso persistente/visible: algunos lanzadores de AppIndicator no
-    # muestran zenity de forma fiable en Wayland, así que usamos también
-    # notify/notify-send y dejamos traza en stdout.
-    try:
-        app.notify("UrOwnKeyboard", short)
-    except Exception:
-        pass
-    try:
-        app.subprocess.run(["notify-send", title, message],text=True,stdout=app.subprocess.PIPE,stderr=app.subprocess.PIPE,check=False)
-    except Exception:
-        pass
-    try:
-        app.show_error(title, message)
-    except Exception:
-        pass
-    try:
-        print(f"{title}: {message}")
-    except Exception:
-        pass
 
 def install(app):
     base_run_menu_cmd = app.run_menu_cmd
@@ -118,9 +92,8 @@ def install(app):
         app.notify("Keyboard", label + " activated")
 
     def activar_profile(profile):
-        if is_gnome_wayland() and profile_is_custom_xkb(profile):
-            _show_blocked_profile_warning(app, profile)
-            return
+        # uok activate now knows how to install/activate custom profiles in GNOME Wayland.
+        # Keep routing through the CLI so the indicator and terminal share one activation path.
         return base_activate_profile(profile)
     app.run_menu_cmd = run_menu_cmd
     app.subprocess.run = subprocess_run

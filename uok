@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
 import os
 import argparse
-import hashlib
 import json
 import re
 import shlex
 import shutil
 import subprocess
 import tempfile
-import unicodedata
 from pathlib import Path
 import sys
+from uok_backends.profile_store import (
+    safe_id, load_profiles, find_profile, find_duplicate,
+    unique_layout_id, delete_file_if_safe,
+)
+from uok_backends.session import is_gnome_wayland
+from uok_backends.system_xkb_install import (
+    activate_profile_gnome_wayland,
+    activate_gnome_source_id,
+    ensure_profile_available_in_gnome,
+    remove_profile_system_layout,
+    remove_gnome_source,
+    remove_system_layouts,
+    profile_system_xkb_id,
+    legacy_profile_system_xkb_ids,
+    system_layout_file,
+    EVDEV_XML,
+)
+from uok_backends import system_sources
+from uok_backends.source_utils import source_id_to_include
 
 HOME = Path.home()
 CONFIG = HOME / ".config" / "teclado-indicador"
@@ -24,19 +41,16 @@ for d in [CONFIG, PROFILES, KEYD_DIR, XKB_DIR, USER_XKB]:
     d.mkdir(parents=True, exist_ok=True)
 
 def refresh_graphical_indicator():
-    indicator = HOME / ".local" / "bin" / "teclado-indicador.py"
-    if not indicator.exists():
-        return
-    # Only try to refresh if a graphical session is available.
-    import os
-    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        return
-    running = subprocess.run(["pgrep", "-f", "teclado-indicador.py"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    if running.returncode != 0:
-        return
-    subprocess.run(["pkill", "-f", "teclado-indicador.py"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    log = open("/tmp/teclado-indicador.log", "a")
-    subprocess.Popen([str(indicator)],stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+    # Do not kill/restart teclado-indicador from the CLI.
+    # The visual editor imports through `python3 ./uok import`; older versions
+    # used to pkill every teclado-indicador.py process and relaunch the installed
+    # one from ~/.local/bin, which made the patched test indicator disappear and
+    # the old installed menu come back.
+    #
+    # GUI callers that live inside the indicator refresh the menu in-process via
+    # refrescar_menu_indicador(). External callers (CLI/editor) leave the running
+    # indicator alive; the user can choose "Reload list" if needed.
+    return
 
 def ensure_dirs():
     CONFIG.mkdir(parents=True, exist_ok=True)
@@ -44,70 +58,6 @@ def ensure_dirs():
     KEYD_DIR.mkdir(parents=True, exist_ok=True)
     XKB_DIR.mkdir(parents=True, exist_ok=True)
     USER_XKB.mkdir(parents=True, exist_ok=True)
-
-def safe_id(name):
-    name = unicodedata.normalize("NFKD", name)
-    name = name.encode("ascii", "ignore").decode("ascii")
-    name = name.lower()
-    name = re.sub(r"[^a-z0-9]+", "_", name)
-    name = name.strip("_")
-    return name or "configuracion"
-
-def file_hash(path):
-    path = Path(path)
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-def same_file(a, b):
-    if not a and not b:
-        return True
-    if not a or not b:
-        return False
-    a = Path(a).expanduser()
-    b = Path(b).expanduser()
-    if not a.exists() or not b.exists():
-        return False
-    return file_hash(a) == file_hash(b)
-
-def load_profiles():
-    profiles = []
-    for file in sorted(PROFILES.glob("*.json")):
-        try:
-            profile = json.loads(file.read_text())
-            profile["_profile_file"] = str(file)
-            profiles.append(profile)
-        except Exception:
-            pass
-    return profiles
-
-def find_profile(name_or_id):
-    for profile in load_profiles():
-        if profile.get("id") == name_or_id or profile.get("name") == name_or_id:
-            return profile
-    return None
-
-def find_duplicate(xkb_file, keyd_file):
-    for profile in load_profiles():
-        existing_xkb = profile.get("xkb_file")
-        existing_keyd = profile.get("keyd_conf")
-        if same_file(xkb_file, existing_xkb) and same_file(keyd_file, existing_keyd):
-            return profile
-    return None
-
-def unique_layout_id(base_id):
-    candidate = base_id
-    counter = 2
-    while True:
-        profile_file = PROFILES / f"{candidate}.json"
-        xkb_file = USER_XKB / candidate
-        keyd_file = KEYD_DIR / f"{candidate}.conf"
-        if not profile_file.exists() and not xkb_file.exists() and not keyd_file.exists():
-            return candidate
-        candidate = f"{base_id}_{counter}"
-        counter += 1
 
 def validate_xkb(layout_id):
     with tempfile.NamedTemporaryFile(prefix="uok-xkb-", suffix=".xkm") as tmp:
@@ -133,6 +83,98 @@ def apply_keyd(keyd_conf):
     except subprocess.TimeoutExpired as exc:
         return subprocess.CompletedProcess(cmd,124,exc.stdout or "","Timed out applying keyd.conf. XKB can continue, but keyd was not applied.")
 
+LAYOUT_LABELS = {"es":"Spanish","de":"German","us":"US English","gb":"UK English","fr":"French","it":"Italiano","pt":"Portuguese","br":"Portuguese (Brazil)"}
+
+
+def system_source_label(source_type, source_id):
+    source_id = str(source_id or "")
+    if source_type == "xkb":
+        if "+" in source_id:
+            layout, variant = source_id.split("+", 1)
+        else:
+            layout, variant = source_id, ""
+        label = LAYOUT_LABELS.get(layout, layout.upper() if layout else source_id)
+        return f"{label} ({variant})" if variant else label
+    if source_type == "ibus":
+        return f"IBus: {source_id}"
+    return f"{source_type}: {source_id}"
+
+
+def current_system_sources():
+    sources = list(system_sources.current_sources())
+    if sources:
+        return sources
+    # Fallback: never let `uok list` hide the user's GNOME input sources just
+    # because desktop/session detection failed or an installed command is run
+    # outside the expected graphical environment. This still lists only the
+    # sources the user has added, not the full system catalogue.
+    try:
+        return list(system_sources.gnome_sources())
+    except Exception:
+        return []
+
+
+def find_system_source(query):
+    wanted = str(query or "").strip().lower()
+    if not wanted:
+        return None
+    for index, source in enumerate(current_system_sources()):
+        if len(source) < 2:
+            continue
+        source_type, source_id = source[0], source[1]
+        label = system_source_label(source_type, source_id)
+        candidates = {
+            str(source_id).lower(),
+            source_id_to_include(source_id).lower(),
+            label.lower(),
+            f"{source_type}:{source_id}".lower(),
+            str(index),
+        }
+        if wanted in candidates:
+            return {"index": index, "source_type": source_type, "source_id": source_id, "name": label}
+    return None
+
+
+def setxkbmap_apply_source(source_type, source_id):
+    if source_type != "xkb" or not source_id:
+        return subprocess.CompletedProcess(["setxkbmap"], 2, "", "Fuente XKB no válida.")
+    if "+" in source_id:
+        layout, variant = source_id.split("+", 1)
+        cmd = ["setxkbmap", layout]
+        if variant:
+            cmd.extend(["-variant", variant])
+    else:
+        cmd = ["setxkbmap", source_id]
+    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+
+def activate_system_source(source):
+    source_type = source["source_type"]
+    source_id = source["source_id"]
+    label = source["name"]
+    if source_type != "xkb":
+        raise SystemExit(f"UOK CLI sólo puede activar fuentes XKB del sistema por ahora: {source_type}:{source_id}")
+    keyd_result = apply_keyd("")
+    keyd_warning = ""
+    if keyd_result.returncode != 0:
+        keyd_warning = "WARNING: keyd could not be disabled. The layout was activated, but previous keyd remaps may remain."
+    if is_gnome_wayland():
+        result = activate_gnome_source_id(source_id)
+        if not result.ok:
+            details = ("\n\n" + result.details) if result.details else ""
+            raise SystemExit(result.message + details)
+        desktop = "gnome-wayland"
+    else:
+        result = setxkbmap_apply_source(source_type, source_id)
+        if result.returncode != 0:
+            raise SystemExit("No se pudo activar la fuente XKB del sistema.\n\n" + ((result.stderr or result.stdout or "").strip()))
+        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "x11") or "x11"
+    current = {"type":"gnome-source","name":label,"source_type":source_type,"source_id":source_id,"desktop":desktop,"keyd_conf":None}
+    CURRENT_PROFILE.write_text(json.dumps(current, indent=2, ensure_ascii=False))
+    print(f"Active system source: {label} ({source_id})")
+    if keyd_warning:
+        print(keyd_warning, file=sys.stderr)
+
 def delete_file_if_safe(path_str):
     if not path_str:
         return
@@ -143,21 +185,52 @@ def delete_file_if_safe(path_str):
     if allowed and path.exists() and path.is_file():
         path.unlink()
 
+def _uok_norm_source_id(value):
+    return re.sub(r"_+", "_", str(value or "").strip()).lower()
+
+def _uok_profile_system_ids(profiles):
+    ids = set()
+    for p in profiles or []:
+        for key in ("system_xkb_id", "id"):
+            value = p.get(key) if isinstance(p, dict) else None
+            if value:
+                ids.add(str(value))
+                ids.add(_uok_norm_source_id(value))
+    return ids
+
 def cmd_list(_args):
     profiles = load_profiles()
-    if not profiles:
-        print("No imported configurations.")
-        return
-    current_id = None
+    uok_system_ids = _uok_profile_system_ids(profiles)
+    sources = [s for s in current_system_sources() if len(s) >= 2 and not (s[0] == "xkb" and (str(s[1]) in uok_system_ids or _uok_norm_source_id(s[1]) in uok_system_ids))]
+    current = {}
     if CURRENT_PROFILE.exists():
         try:
-            current_id = json.loads(CURRENT_PROFILE.read_text()).get("id")
+            current = json.loads(CURRENT_PROFILE.read_text())
         except Exception:
-            pass
-    for profile in profiles:
-        marker = "* " if profile.get("id") == current_id else ""
-        keyd_mark = " + keyd" if profile.get("keyd_conf") else ""
-        print(f"{marker}{profile.get('id')} — {profile.get('name')}{keyd_mark}")
+            current = {}
+    current_id = current.get("id")
+    current_source = (current.get("source_type"), current.get("source_id")) if current.get("type") == "gnome-source" else None
+    if sources:
+        print("System sources:")
+        for index, source in enumerate(sources):
+            if len(source) < 2:
+                continue
+            source_type, source_id = source[0], source[1]
+            label = system_source_label(source_type, source_id)
+            marker = "* " if current_source == (source_type, source_id) else "  "
+            print(f"{marker}{index}: {source_id} — {label}")
+    else:
+        print("System sources: none detected.")
+    print()
+    if profiles:
+        print("UOK profiles:")
+        for profile in profiles:
+            marker = "* " if profile.get("id") == current_id else "  "
+            keyd_mark = " + keyd" if profile.get("keyd_conf") else ""
+            wayland_mark = " + wayland" if profile.get("wayland_ready") or profile.get("system_xkb_id") else ""
+            print(f"{marker}{profile.get('id')} — {profile.get('name')}{keyd_mark}{wayland_mark}")
+    else:
+        print("UOK profiles: none imported.")
 
 def cmd_import(args):
     name = args.name
@@ -191,7 +264,20 @@ def cmd_import(args):
     profile = {"type":"imported-profile","id":layout_id,"name":name,"xkb_file":str(dest_xkb)}
     if dest_keyd:
         profile["keyd_conf"] = str(dest_keyd)
-    (PROFILES / f"{layout_id}.json").write_text(son.dumps(profile, indent=2, ensure_ascii=False))
+    profile_file = PROFILES / f"{layout_id}.json"
+    profile_file.write_text(json.dumps(profile, indent=2, ensure_ascii=False))
+    if is_gnome_wayland():
+        # On GNOME Wayland, custom XKB profiles must exist as GNOME/system
+        # input sources. Install/add immediately, but keep the visible item as
+        # a UOK profile; the implementation source is hidden from UOK menus.
+        profile["_profile_file"] = str(profile_file)
+        wayland_result = ensure_profile_available_in_gnome(profile)
+        if not wayland_result.ok:
+            print("WARNING: imported, but could not install for GNOME Wayland.", file=sys.stderr)
+            if wayland_result.details:
+                print(wayland_result.details, file=sys.stderr)
+        else:
+            print("GNOME Wayland: if this is the first time you use this custom layout, log out and back in before testing it.")
     suffix = " with keyd" if dest_keyd else ""
     if layout_id != base_id:
         print(f"Configuration imported as: {layout_id}{suffix}")
@@ -202,10 +288,37 @@ def cmd_import(args):
 def cmd_activate(args):
     profile = find_profile(args.profile)
     if not profile:
-        raise SystemExit(f"Configuration does not exist: {args.profile}")
+        source = find_system_source(args.profile)
+        if source:
+            return activate_system_source(source)
+        raise SystemExit(f"Configuration or system source does not exist: {args.profile}")
     layout_id = profile["id"]
     keyd_conf = profile.get("keyd_conf")
     keyd_warning = ""
+
+    if is_gnome_wayland():
+        # Ensure profile is installed/added, then activate its hidden GNOME source.
+        result = activate_profile_gnome_wayland(profile)
+        if not result.ok:
+            details = ("\n\n" + result.details) if result.details else ""
+            raise SystemExit(result.message + details)
+        system_id = result.message
+        keyd_result = apply_keyd(keyd_conf)
+        if keyd_result.returncode != 0 and keyd_conf:
+            keyd_warning = "WARNING: keyd could not be applied. The GNOME Wayland layout was activated, but physical shortcuts/remaps were not."
+        current = dict(profile)
+        current["type"] = "imported-profile"
+        current["desktop"] = "gnome-wayland"
+        current["system_xkb_id"] = system_id
+        current["wayland_ready"] = True
+        if keyd_warning:
+            current["keyd_warning"] = keyd_warning
+        CURRENT_PROFILE.write_text(json.dumps(current, indent=2, ensure_ascii=False))
+        print(f"Active configuration: {profile['name']} ({layout_id})")
+        if keyd_warning:
+            print(keyd_warning, file=sys.stderr)
+        return
+
     # keyd es opcional. Si falla, avisamos pero no bloqueamos XKB.
     # Esto evita que un problema del daemon keyd impida activar el teclado creado.
     result = apply_keyd(keyd_conf)
@@ -229,6 +342,13 @@ def cmd_delete(args):
     profile = find_profile(args.profile)
     if not profile:
         raise SystemExit(f"Configuration does not exist: {args.profile}")
+
+    cleanup_warning = None
+    if is_gnome_wayland() or profile.get("wayland_ready") or profile.get("system_xkb_id"):
+        cleanup = remove_profile_system_layout(profile)
+        if not cleanup.ok:
+            cleanup_warning = cleanup.details or cleanup.message
+
     delete_file_if_safe(profile.get("xkb_file"))
     delete_file_if_safe(profile.get("keyd_conf"))
     delete_file_if_safe(profile.get("_profile_file"))
@@ -240,7 +360,159 @@ def cmd_delete(args):
         except Exception:
             pass
     print(f"Configuration deleted: {profile['name']}")
+    if cleanup_warning:
+        print("WARNING: The profile was deleted, but the GNOME Wayland system layout could not be fully cleaned:", file=sys.stderr)
+        print(cleanup_warning, file=sys.stderr)
     refresh_graphical_indicator()
+
+
+def _uok_evdev_marker_ids():
+    try:
+        text = EVDEV_XML.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return set()
+    return set(re.findall(r"<!--\s*UOK layout:\s*([^\s<]+)\s*-->", text))
+
+
+def _uok_evdev_plain_ids():
+    path = Path("/usr/share/X11/xkb/rules/evdev")
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return set()
+    out = set()
+    for line in text.splitlines():
+        m = re.match(r"^\s*([A-Za-z0-9_.-]+)\s*=\s*\1\s*$", line)
+        if m:
+            out.add(m.group(1))
+    return out
+
+
+def _uok_known_wayland_ids(profiles):
+    canonical = set()
+    legacy = set()
+    for profile in profiles or []:
+        try:
+            cid = profile_system_xkb_id(profile)
+            if cid:
+                canonical.add(cid)
+        except Exception:
+            pass
+        try:
+            for sid in legacy_profile_system_xkb_ids(profile):
+                if sid:
+                    legacy.add(str(sid))
+        except Exception:
+            pass
+        for key in ("id", "system_xkb_id"):
+            value = profile.get(key) if isinstance(profile, dict) else None
+            if value:
+                legacy.add(str(value))
+    return canonical, legacy
+
+
+def _uok_cleanup_wayland_candidates():
+    profiles = load_profiles()
+    canonical_ids, known_ids = _uok_known_wayland_ids(profiles)
+    stale_known_ids = known_ids - canonical_ids
+    marker_ids = _uok_evdev_marker_ids()
+    plain_ids = _uok_evdev_plain_ids()
+    source_ids = {sid for stype, sid in system_sources.gnome_sources() if stype == "xkb"}
+
+    remove_ids = set()
+    reasons = {}
+
+    def add(system_id, reason):
+        system_id = str(system_id or "").strip()
+        if not system_id or system_id in canonical_ids:
+            return
+        remove_ids.add(system_id)
+        reasons.setdefault(system_id, set()).add(reason)
+
+    # UOK blocks in evdev.xml whose profile no longer exists.
+    for system_id in marker_ids:
+        if system_id not in known_ids:
+            add(system_id, "registered in evdev.xml but has no UOK profile")
+
+    # Legacy technical ids for profiles that now use profile.id directly.
+    # Only report them if there is still something concrete to remove.
+    # Otherwise cleanup-wayland would keep reporting stale ids forever just
+    # because legacy_profile_system_xkb_ids(profile) can derive old names.
+    for system_id in stale_known_ids:
+        if (
+            system_id in source_ids
+            or system_id in marker_ids
+            or system_id in plain_ids
+            or system_layout_file(system_id).exists()
+        ):
+            add(system_id, "stale legacy technical id for an existing profile")
+
+    # GNOME sources left over after a profile JSON was deleted.  Be conservative:
+    # remove non-profile sources only if they carry the UOK prefix, or if they are
+    # present in UOK's marked registry/plain rules.
+    for system_id in source_ids:
+        if system_id in canonical_ids:
+            continue
+        if system_id in stale_known_ids:
+            add(system_id, "stale GNOME source for an existing profile")
+        elif system_id in marker_ids or system_id in plain_ids:
+            if system_id not in known_ids:
+                add(system_id, "GNOME source registered by UOK but has no profile")
+        elif system_id.startswith("uok_") and system_id not in known_ids:
+            add(system_id, "orphan GNOME source with UOK prefix")
+
+    # Symbols files that correspond to the ids above can be deleted with the same
+    # privileged helper. Missing files are harmless.
+    return sorted(remove_ids), {k: sorted(v) for k, v in reasons.items()}
+
+
+def cmd_cleanup_wayland(args):
+    ids, reasons = _uok_cleanup_wayland_candidates()
+    if not ids:
+        print("No orphan GNOME Wayland UOK layouts found.")
+        return
+
+    print("Orphan/stale GNOME Wayland UOK layouts:")
+    for system_id in ids:
+        detail = "; ".join(reasons.get(system_id, []))
+        suffix = f" — {detail}" if detail else ""
+        print(f"  - {system_id}{suffix}")
+    print()
+
+    if getattr(args, "dry_run", False):
+        print("Dry run only. Nothing was removed.")
+        return
+
+    if not getattr(args, "yes", False):
+        answer = input("Remove these orphan/stale Wayland layouts now? [y/N] ").strip().lower()
+        if answer not in {"y", "yes", "s", "si", "sí"}:
+            print("Cleanup cancelled.")
+            return
+
+    warnings = []
+    for system_id in ids:
+        result = remove_gnome_source(system_id)
+        if not result.ok:
+            warnings.append(f"{system_id}: {result.details or result.message}")
+
+    privileged_ids = []
+    marker_ids = _uok_evdev_marker_ids()
+    plain_ids = _uok_evdev_plain_ids()
+    for system_id in ids:
+        if system_id in marker_ids or system_id in plain_ids or system_layout_file(system_id).exists():
+            privileged_ids.append(system_id)
+    if privileged_ids:
+        result = remove_system_layouts(privileged_ids)
+        if not result.ok:
+            warnings.append(result.details or result.message)
+
+    if warnings:
+        print("Cleanup completed with warnings:", file=sys.stderr)
+        for warning in warnings:
+            print("  - " + warning, file=sys.stderr)
+    else:
+        print("Cleanup completed.")
+
 
 def cmd_current(_args):
     if not CURRENT_PROFILE.exists():
@@ -541,7 +813,9 @@ def main():
   uok import --name "My keyboard" --xkb ./my_keyboard
   uok import --name "My keyboard" --xkb ./my_keyboard --keyd ./my_keyboard.keyd.conf
   uok activate my_keyboard
+  uok activate es
   uok delete my_keyboard
+  uok cleanup-wayland
   uok current
   uok show-keyd
   uok restore
@@ -558,12 +832,16 @@ Command-specific help:
     p.add_argument("--xkb", required=True, help="XKB file / symbols")
     p.add_argument("--keyd", help="keyd file.conf opcional")
     p.set_defaults(func=cmd_import)
-    p = sub.add_parser("activate", help="Activate a configuration")
-    p.add_argument("profile", help="Configuration ID or name")
+    p = sub.add_parser("activate", help="Activate a UOK configuration or a detected system source")
+    p.add_argument("profile", help="UOK configuration ID/name, system source id, label or index")
     p.set_defaults(func=cmd_activate)
     p = sub.add_parser("delete", help="Delete a configuration")
     p.add_argument("profile", help="Configuration ID or name")
     p.set_defaults(func=cmd_delete)
+    p = sub.add_parser("cleanup-wayland", aliases=["cleanup-orphans"], help="Remove orphan/stale UOK GNOME Wayland system layouts")
+    p.add_argument("--dry-run", action="store_true", help="Show what would be removed without changing anything")
+    p.add_argument("-y", "--yes", action="store_true", help="Do not ask for confirmation")
+    p.set_defaults(func=cmd_cleanup_wayland)
     p = sub.add_parser("current", help="Show the registered active configuration")
     p.set_defaults(func=cmd_current)
     p = sub.add_parser("show-keyd", help="Show the keyd.conf associated with the active configuration")

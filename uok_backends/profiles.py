@@ -1,8 +1,30 @@
+import json
+import shlex
+import shutil
+import subprocess
+from pathlib import Path
+from uok_backends.profile_store import load_profiles as profile_store_load_profiles, delete_file_if_safe
+from uok_backends.system_xkb_install import remove_profile_system_layout
+from uok_backends.session import is_gnome_wayland
+from uok_backends.system_xkb_install import ensure_profile_available_in_gnome
+
 _APP = None
 
 def _restart_indicator():
-    if _APP is not None and hasattr(_APP, "reiniciar_indicador"):
-        return _APP.reiniciar_indicador()
+    # Nunca cerramos/reiniciamos el indicador después de añadir/importar/borrar.
+    # En pruebas Wayland, cerrar el proceso hacía parecer que la operación fallaba
+    # aunque el perfil se hubiera creado. Refrescamos el menú in-process y, si no
+    # se puede, dejamos el indicador abierto y mostramos una notificación.
+    if _APP is not None and hasattr(_APP, "refrescar_menu_indicador"):
+        try:
+            return _APP.refrescar_menu_indicador()
+        except Exception as exc:
+            try:
+                _APP.notify("UrOwnKeyboard", f"Configuración añadida, pero no se pudo refrescar el menú: {exc}")
+            except Exception:
+                pass
+            return False
+    return False
 
 def profile_name(profile):
     return profile.get("name") or profile.get("id") or "perfil UOK"
@@ -17,55 +39,86 @@ def unsupported_gnome_wayland_message(profile):
         "Usa GNOME X11 para perfiles propios, o instala esta distribución como ""fuente XKB del sistema/GNOME.")
 
 def load_profiles():
-    profiles = []
-    for file in sorted(PROFILES.glob("*.json")):
-        try:
-            profile = json.loads(file.read_text())
-            profile["_profile_file"] = str(file)
-            profiles.append(profile)
-        except Exception:
-            pass
-    return profiles
+    return profile_store_load_profiles(PROFILES)
 
 def crear_layout_visual(_):
     editor = HOME / ".local" / "bin" / "uok-layout-editor.py"
     if not editor.exists():
-        editor = Path(__file__).resolve().parent / "uok-layout-editor.py"
+        editor = Path(__file__).resolve().parent.parent / "uok-layout-editor.py"
     run(f'{shlex.quote(str(editor))} || notify-send "Keyboard" "Could not open layout editor"')
 
 def importar_configuracion(_):
-    name = sh('zenity --entry ''--title="Import keyboard" ''--text="Configuration name:" ''|| true')
-    if not name:
+    try:
+        name = sh('zenity --entry '
+            '--title="Import keyboard" '
+            '--text="Configuration name:" '
+            '|| true')
+        if not name:
+            return
+        base_id = safe_id(name)
+        layout_id = unique_layout_id(base_id)
+        xkb_file = sh('zenity --file-selection '
+            '--title="Select XKB / symbols file" '
+            '|| true')
+        if not xkb_file:
+            return
+        keyd_file = sh('zenity --file-selection '
+            '--title="Selecciona keyd.conf opcional" '
+            '--filename="$HOME/" '
+            '|| true')
+        dest_xkb = USER_XKB / layout_id
+        dest_xkb.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(xkb_file, dest_xkb)
+        profile = {"id": layout_id, "name": name, "xkb_file": str(dest_xkb)}
+        if keyd_file:
+            dest_keyd = KEYD_DIR / f"{layout_id}.conf"
+            dest_keyd.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(keyd_file, dest_keyd)
+            profile["keyd_conf"] = str(dest_keyd)
+        profile_file = PROFILES / f"{layout_id}.json"
+        profile_file.parent.mkdir(parents=True, exist_ok=True)
+        profile_file.write_text(json.dumps(profile, indent=2, ensure_ascii=False))
+        wayland_note = ""
+        if is_gnome_wayland():
+            profile["_profile_file"] = str(profile_file)
+            result = ensure_profile_available_in_gnome(profile)
+            if result.ok:
+                # ensure_profile_available_in_gnome devuelve el ID técnico añadido
+                # a GNOME. Guardarlo explícitamente aquí evita sobrescribir el JSON
+                # actualizado con una copia vieja sin system_xkb_id.
+                profile["system_xkb_id"] = result.message
+                profile["wayland_ready"] = True
+                profile_file.write_text(json.dumps({k:v for k,v in profile.items() if k != "_profile_file"}, indent=2, ensure_ascii=False))
+                wayland_note = " + wayland"
+                try:
+                    notify("UrOwnKeyboard", "Perfil instalado para GNOME Wayland. Si es la primera vez que usas esta distribución, cierra sesión y vuelve a entrar para que GNOME la cargue.")
+                except Exception:
+                    pass
+            else:
+                wayland_note = " (importada, pero no instalada para Wayland)"
+                try:
+                    notify("UrOwnKeyboard", "Imported, but could not install for GNOME Wayland")
+                except Exception:
+                    pass
+        if layout_id != base_id:
+            notify("Keyboard", f"Configuration {name} imported as {layout_id}{wayland_note}")
+        else:
+            notify("Keyboard", f"Configuration {name} imported{wayland_note}")
+        _restart_indicator()
+    except Exception as exc:
+        try:
+            notify("UrOwnKeyboard", f"No se pudo añadir la configuración: {exc}")
+        except Exception:
+            pass
+        try:
+            if _APP is not None and hasattr(_APP, "show_error"):
+                _APP.show_error("UrOwnKeyboard", f"No se pudo añadir la configuración.\n\n{exc}")
+        except Exception:
+            pass
         return
-    base_id = safe_id(name)
-    layout_id = unique_layout_id(base_id)
-    xkb_file = sh('zenity --file-selection ''--title="Select XKB / symbols file" ''|| true')
-    if not xkb_file:
-        return
-    keyd_file = sh('zenity --file-selection ''--title="Selecciona keyd.conf opcional" ''--filename="$HOME/" ''|| true')
-    dest_xkb = USER_XKB / layout_id
-    shutil.copyfile(xkb_file, dest_xkb)
-    profile = {"id":layout_id,"name":name,"xkb_file":str(dest_xkb)}
-    if keyd_file:
-        dest_keyd = KEYD_DIR / f"{layout_id}.conf"
-        shutil.copyfile(keyd_file, dest_keyd)
-        profile["keyd_conf"] = str(dest_keyd)
-    (PROFILES / f"{layout_id}.json").write_text(json.dumps(profile, indent=2, ensure_ascii=False))
-    if layout_id != base_id:
-        notify("Keyboard", f"Configuration {name} imported as {layout_id}")
-    else:
-        notify("Keyboard", f"Configuration {name} imported")
-    _restart_indicator()
 
 def borrar_si_seguro(path_str):
-    if not path_str:
-        return
-    path = Path(path_str).expanduser().resolve()
-    zonas_permitidas = [USER_XKB.resolve(),KEYD_DIR.resolve(),XKB_DIR.resolve()]
-    permitido = any(str(path).startswith(str(zona) + "/") or path == zona
-        for zona in zonas_permitidas)
-    if permitido and path.exists() and path.is_file():
-        path.unlink()
+    delete_file_if_safe(path_str, extra_allowed_dirs=(USER_XKB, KEYD_DIR, XKB_DIR))
 
 def uok_profile_is_current(profile):
     if not profile or not CURRENT_PROFILE.exists():
@@ -119,6 +172,10 @@ def eliminar_configuracion(_):
         return
     if not uok_safe_before_delete_profile(profile):
         return
+    try:
+        remove_profile_system_layout(profile)
+    except Exception:
+        pass
     borrar_si_seguro(profile.get("xkb_file"))
     borrar_si_seguro(profile.get("keyd_conf"))
     profile_file = Path(profile["_profile_file"]).resolve()
@@ -138,7 +195,9 @@ def get_current_profile():
 def get_xkb_spec_actual():
     profile = get_current_profile()
     if profile and profile.get("type") == "imported-profile" and profile.get("id"):
-        return profile["id"]
+        # Para gkbd-keyboard-display en GNOME Wayland hace falta el ID técnico
+        # instalado como layout de sistema. El perfil visible sigue siendo UOK.
+        return profile.get("system_xkb_id") or profile["id"]
     query = sh("setxkbmap -query")
     layout = ""
     variant = ""
@@ -250,7 +309,21 @@ def abrir_editor_visual(_item=None):
     if editor is None:
         notify("UrOwnKeyboard", "No se encontró el editor visual.")
         return
-    subprocess.Popen([sys.executable, str(editor)],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+    proc = subprocess.Popen([sys.executable, str(editor)],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+    try:
+        import threading
+        def _wait_and_refresh():
+            try:
+                proc.wait()
+            except Exception:
+                return
+            try:
+                _restart_indicator()
+            except Exception:
+                pass
+        threading.Thread(target=_wait_and_refresh, daemon=True).start()
+    except Exception:
+        pass
 
 _PROFILE_FUNCTIONS = ['load_profiles', 'crear_layout_visual', 'importar_configuracion', 'borrar_si_seguro', 'uok_profile_is_current',
     'uok_safe_before_delete_profile', 'eliminar_configuracion', 'get_current_profile', 'get_xkb_spec_actual', 'mostrar_distribucion_actual',

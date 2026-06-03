@@ -6,16 +6,16 @@ import json
 import re
 import shlex
 import subprocess
-import unicodedata
 from pathlib import Path
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("AyatanaAppIndicator3", "0.1")
-from gi.repository import Gtk
+from gi.repository import Gtk, GLib
 from gi.repository import AyatanaAppIndicator3 as AppIndicator3
 from uok_backends import system_sources
 from uok_backends import x11 as uok_x11_backend
 from uok_backends import keyd as uok_keyd_backend
+from uok_backends.profile_store import safe_id, unique_layout_id
 
 HOME = Path.home()
 CONFIG = HOME / ".config" / "teclado-indicador"
@@ -24,7 +24,9 @@ XKB_DIR = CONFIG / "xkb"
 KEYD_DIR = CONFIG / "keyd"
 USER_XKB = HOME / ".xkb" / "symbols"
 CURRENT_PROFILE = CONFIG / "current-profile.json"
-UOK_BIN = HOME / ".local" / "bin" / "uok"
+SCRIPT_DIR = Path(__file__).resolve().parent
+LOCAL_UOK_BIN = SCRIPT_DIR / "uok"
+UOK_BIN = LOCAL_UOK_BIN if LOCAL_UOK_BIN.exists() else HOME / ".local" / "bin" / "uok"
 
 for d in [PROFILES, XKB_DIR, KEYD_DIR, USER_XKB]:
     d.mkdir(parents=True, exist_ok=True)
@@ -37,26 +39,6 @@ def run(cmd):
 
 def notify(title, msg):
     run(f'notify-send {shlex.quote(title)} {shlex.quote(msg)}')
-
-def safe_id(name):
-    name = unicodedata.normalize("NFKD", name)
-    name = name.encode("ascii", "ignore").decode("ascii")
-    name = name.lower()
-    name = re.sub(r"[^a-z0-9]+", "_", name)
-    name = name.strip("_")
-    return name or "configuracion"
-
-def unique_layout_id(base_id):
-    candidate = base_id
-    counter = 2
-    while True:
-        profile_file = PROFILES / f"{candidate}.json"
-        xkb_file = USER_XKB / candidate
-        keyd_file = KEYD_DIR / f"{candidate}.conf"
-        if not profile_file.exists() and not xkb_file.exists() and not keyd_file.exists():
-            return candidate
-        candidate = f"{base_id}_{counter}"
-        counter += 1
 
 def source_label(source_type, source_id):
     names = {"es":"Spanish","us":"US English","de":"German","fr":"French","it":"Italiano","pt":"Portuguese",}
@@ -152,30 +134,28 @@ def aplicar_xkb_source_sync(source_type, source_id):
     show_error("UrOwnKeyboard - XKB",result.message + ("\n\n" + result.details if result.details else ""))
     return False
 
-    def activar_gnome_source(index, source_type, source_id):
-        if not is_gnome_wayland():
-            return base_activate_gnome_source(index, source_type, source_id)
-        label = app.source_label(source_type, source_id)
-        if source_type != "xkb":
-            app.show_error("UrOwnKeyboard - GNOME Wayland","Esta fuente no es XKB y todavía no está soportada en GNOME Wayland.")
-            return
-        try:
-            app.aplicar_keyd_off_sync()
-        except Exception:
-            pass
-        if not gnome_wayland.set_current_index(index):
-            app.show_error("UrOwnKeyboard - GNOME Wayland","No se pudo cambiar la fuente de entrada de GNOME.")
-            return
-        if not gnome_wayland.verify_index(index):
-            app.show_error("UrOwnKeyboard - verificación", f"GNOME no cambió al índice esperado. "
-                f"Esperado: {index}. Actual: {gnome_wayland.current_index()}")
-        try:
-            app.sync_xwayland_for_xkb_source(source_type, source_id)
-        except Exception:
-            pass
-        current = {"type":"gnome-source","name":label,"source_type":source_type,"source_id":source_id,"desktop":"gnome-wayland","keyd_conf":None}
-        app.CURRENT_PROFILE.write_text(app.json.dumps(current, indent=2, ensure_ascii=False))
-        app.notify("Keyboard", label + " activated")
+def activar_gnome_source(index, source_type, source_id):
+    label = source_label(source_type, source_id)
+    try:
+        aplicar_keyd_off_sync()
+    except Exception:
+        pass
+    aplicar_gnome_source_sync(index)
+    if source_type == "xkb" and not aplicar_xkb_source_sync(source_type, source_id):
+        return
+    ok, message = verify_gnome_source_applied(source_type, source_id)
+    if not ok:
+        show_error("UrOwnKeyboard - verificación", message)
+        return
+    current = {
+        "type":"gnome-source",
+        "name":label,
+        "source_type":source_type,
+        "source_id":source_id,
+        "keyd_conf":None,
+    }
+    CURRENT_PROFILE.write_text(json.dumps(current, indent=2, ensure_ascii=False))
+    notify("Keyboard", label + " activated")
 
 def call_optional_hook(name, *args):
     func = globals().get(name)
@@ -265,21 +245,75 @@ try:
 except Exception as exc:
     print(f'UOK LXQt backend disabled: {exc}')
 
+
+def _uok_norm_source_id(value):
+    return re.sub(r"_+", "_", str(value or "").strip()).lower()
+
+def _uok_profile_system_ids(profiles):
+    ids = set()
+    for p in profiles or []:
+        for key in ("system_xkb_id", "id"):
+            value = p.get(key) if isinstance(p, dict) else None
+            if value:
+                ids.add(str(value))
+                ids.add(_uok_norm_source_id(value))
+    return ids
+
+def _uok_source_candidates_for_profile(profile):
+    raw = []
+    for key in ("system_xkb_id", "source_id", "id"):
+        value = profile.get(key) if isinstance(profile, dict) else None
+        if value:
+            raw.append(str(value))
+    profile_id = str((profile or {}).get("id") or "")
+    if profile_id:
+        raw.append(profile_id)
+        raw.append(profile_id.replace("__", "_"))
+        if not profile_id.startswith("uok_"):
+            raw.append("uok_" + profile_id)
+        raw.append("uok_" + profile_id.replace("__", "_"))
+    out = []
+    seen = set()
+    for value in raw:
+        for candidate in (value, value.replace("__", "_")):
+            norm = _uok_norm_source_id(candidate)
+            if candidate and norm not in seen:
+                seen.add(norm)
+                out.append(candidate)
+    return out
+
+def _uok_find_source_index_by_id(source_id):
+    wanted = _uok_norm_source_id(source_id)
+    for i, src in enumerate(get_sources()):
+        if len(src) >= 2 and src[0] == "xkb" and _uok_norm_source_id(src[1]) == wanted:
+            return i, src[0], src[1]
+    return None
+
+def _uok_find_profile_system_source(profile):
+    for candidate in _uok_source_candidates_for_profile(profile):
+        found = _uok_find_source_index_by_id(candidate)
+        if found is not None:
+            return found
+    return None
+
 def crear_menu():
     call_optional_hook("uok_lxqt_cleanup_tray")
     menu = Gtk.Menu()
     sources = get_sources()
     for hook in ("uok_mate_append_system_sources_to_menu","uok_cinnamon_append_sources","uok_lxqt_append_sources"):
         call_optional_hook(hook, menu)
+    profiles = load_profiles()
+    uok_system_ids = _uok_profile_system_ids(profiles)
     for index, source in enumerate(sources):
         if len(source) != 2:
             continue
         source_type, source_id = source
+        if source_type == "xkb" and (str(source_id) in uok_system_ids or _uok_norm_source_id(source_id) in uok_system_ids):
+            continue
         label = source_label(source_type, source_id)
         item = Gtk.MenuItem(label=label)
         item.connect("activate",lambda _,i=index,t=source_type,s=source_id:activar_gnome_source(i,t,s))
         menu.append(item)
-    profiles = load_profiles()
     if sources and profiles:
         menu.append(Gtk.SeparatorMenuItem())
     for profile in profiles:
@@ -314,9 +348,65 @@ def crear_menu():
     menu.show_all()
     return menu
 
+
+# Auto-refresh: when profiles or GNOME input sources change outside the
+# indicator process (for example, after saving from the visual editor), refresh
+# the menu in-place instead of killing/relaunching the indicator.
+def _uok_menu_state_signature():
+    try:
+        src_sig = tuple((str(a), str(b)) for a, b in get_sources())
+    except Exception:
+        src_sig = ()
+    try:
+        prof_sig = tuple(sorted(
+            (str(p.get("id", "")), str(p.get("name", "")), str(p.get("system_xkb_id", "")), str(p.get("wayland_ready", "")))
+            for p in load_profiles()
+        ))
+    except Exception:
+        prof_sig = ()
+    return (src_sig, prof_sig)
+
+_uok_last_menu_signature = None
+
+def _uok_autorefresh_menu_tick():
+    global _uok_last_menu_signature
+    try:
+        sig = _uok_menu_state_signature()
+        if _uok_last_menu_signature is None:
+            _uok_last_menu_signature = sig
+            return True
+        if sig != _uok_last_menu_signature:
+            _uok_last_menu_signature = sig
+            try:
+                refrescar_menu_indicador()
+            except Exception as exc:
+                try:
+                    notify("UrOwnKeyboard", f"No se pudo refrescar el menú: {exc}")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return True
+
+def refrescar_menu_indicador():
+    global uok_main_menu
+    try:
+        uok_main_menu = crear_menu()
+        indicator.set_menu(uok_main_menu)
+        return True
+    except Exception as exc:
+        try:
+            notify("UrOwnKeyboard", f"No se pudo refrescar el menú: {exc}")
+        except Exception:
+            pass
+        return False
+
 def reiniciar_indicador():
-    Gtk.main_quit()
-    run("$HOME/.local/bin/teclado-indicador.py")
+    # Reload list debe ser un refresco in-process. No cerramos ni relanzamos
+    # el indicador, porque en Wayland/terminal de pruebas eso se percibe como
+    # que añadir/borrar una configuración cierra el programa.
+    if not refrescar_menu_indicador():
+        notify("UrOwnKeyboard", "No se pudo refrescar el menú; abre el indicador de nuevo si la lista no cambia.")
 try:
     __uok_mate_base_abrir_ajustes_teclado = abrir_ajustes_teclado
 except Exception:
@@ -338,10 +428,7 @@ def uok_keyd_profile_diagnostic(profile):
         return "Perfil vacío."
     keyd_conf = profile.get("keyd_conf")
     if not keyd_conf:
-        return ("Este perfil no tiene archivo keyd_conf asociado.\n"
-            "Eso significa que el editor visual no importó ningún keyd.conf para esta configuración.\n\n"
-            "Vuelve a abrir el editor visual, añade al menos un atajo keyd o activa el bloqueo global de atajos, "
-            "y guarda/importa de nuevo.")
+        return ""
     path = Path(keyd_conf).expanduser()
     if not path.exists():
         return ("El perfil tiene keyd_conf, pero el archivo no existe:\n"f"{path}")
@@ -358,6 +445,33 @@ def activar_profile(profile):
     if not profile_id:
         show_error("UrOwnKeyboard", "Invalid imported configuration.")
         return
+
+    # GNOME Wayland: a custom UOK profile is implemented as a hidden GNOME
+    # system input source. When the hidden source exists, activate it through
+    # the exact same path as the working system-source menu item, then record
+    # the visible state as the UOK profile. This avoids the duplicate visible
+    # item while preserving the behaviour that GNOME accepts.
+    if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" and "gnome" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower():
+        found = _uok_find_profile_system_source(profile)
+        if found is not None:
+            index, source_type, source_id = found
+            activar_gnome_source(index, source_type, source_id)
+            current = dict(profile)
+            current["type"] = "imported-profile"
+            current["desktop"] = "gnome-wayland"
+            current["system_xkb_id"] = source_id
+            current["wayland_ready"] = True
+            try:
+                CURRENT_PROFILE.write_text(json.dumps(current, indent=2, ensure_ascii=False))
+            except Exception:
+                pass
+            try:
+                aplicar_keyd_de_profile_o_apagar(profile)
+            except Exception:
+                pass
+            notify("Keyboard", f"Active configuration: {profile.get('name', profile_id)}")
+            return
+
     diagnostic = uok_keyd_profile_diagnostic(profile)
     uok_bin = UOK_BIN if UOK_BIN.exists() else Path("uok")
     result = run_menu_cmd([str(uok_bin), "activate", profile_id])
@@ -429,6 +543,11 @@ call_optional_hook("ocultar_menu_xfce")
 sincronizar_estado_al_arrancar()
 uok_main_menu = crear_menu()
 indicator.set_menu(uok_main_menu)
+try:
+    _uok_last_menu_signature = _uok_menu_state_signature()
+    GLib.timeout_add_seconds(2, _uok_autorefresh_menu_tick)
+except Exception:
+    pass
 
 def uok_enable_cinnamon_status_icon(menu):
     try:
