@@ -89,6 +89,31 @@ def sources_from_layouts_variants(layouts, variants=None):
     return unique_sources(out)
 
 
+
+def desktop_layout_value_to_source_id(raw):
+    """Normalize layout values stored by X11 desktop settings.
+
+    MATE/libgnomekbd style settings can store layouts as "es", "de",
+    "us+intl", "us(intl)" or occasionally separated by tab/space.  Return
+    the UOK source id form: layout or layout+variant.
+    """
+    raw = str(raw or "").strip().strip("'\"")
+    if not raw:
+        return ""
+    if raw.startswith("xkb:"):
+        return ibus_engine_to_source_id(raw)
+    raw = raw.replace("\t", "+")
+    if "(" in raw and raw.endswith(")"):
+        return include_to_source_id(raw)
+    if "+" in raw:
+        layout, variant = raw.split("+", 1)
+        return source_id_from_layout_variant(layout, variant)
+    parts = raw.split()
+    if len(parts) >= 2:
+        return source_id_from_layout_variant(parts[0], parts[1])
+    return source_id_from_layout_variant(raw, "")
+
+
 def parse_gsettings_sources_literal(raw):
     try:
         value = ast.literal_eval((raw or "").strip())

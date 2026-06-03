@@ -1787,7 +1787,6 @@ class UokLayoutEditor(Gtk.Window):
                     error_dialog.run()
                     error_dialog.destroy()
                     continue
-
                 base = self.base_for_code(code)
                 if new_symbols == base:
                     self.changes.pop(code, None)

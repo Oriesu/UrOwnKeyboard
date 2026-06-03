@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import re
@@ -5,12 +6,6 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from uok_backends.session import desktop_text
-from uok_backends.source_utils import (
-    split_csv_keep_empty, split_csv_nonempty, source_id_from_layout_variant,
-    source_id_to_include, include_to_source_id, normalize_source_id,
-    read_gsettings_array, xfconf_get, setxkbmap_layout_variant_pairs,
-    ibus_engine_to_source_id,
-)
 
 SYSTEM_RULE_FILES = [Path("/usr/share/X11/xkb/rules/evdev.xml"), Path("/usr/share/X11/xkb/rules/base.xml")]
 
@@ -27,6 +22,33 @@ def is_desktop(*names):
     desktop = desktop_name()
     return any(name.lower() in desktop for name in names)
 
+def split_csv_keep_empty(value):
+    return [x.strip() for x in (value or "").split(",")]
+
+def split_csv_nonempty(value):
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
+
+def source_id_from_layout_variant(layout, variant=""):
+    layout = (layout or "").strip()
+    variant = (variant or "").strip()
+    if not layout:
+        return ""
+    return f"{layout}+{variant}" if variant else layout
+
+def source_id_to_include(source_id):
+    source_id = (source_id or "").strip()
+    if "+" in source_id:
+        layout, variant = source_id.split("+", 1)
+        return f"{layout}({variant})" if variant else layout
+    return source_id
+
+def include_to_source_id(include_name):
+    include_name = (include_name or "").strip()
+    m = re.fullmatch(r"([^()]+)\(([^()]+)\)", include_name)
+    if m:
+        return f"{m.group(1)}+{m.group(2)}"
+    return include_name
+
 LAYOUT_LABELS = {"es":"Español","de":"Alemán","us":"Inglés(EE. UU.)","gb":"Inglés (Reino Unido)","fr":"Francés","it":"Italiano","pt":"Portugués",
     "br":"Portugués (Brasil)"}
 
@@ -37,6 +59,19 @@ def layout_label(layout, variant=""):
     if variant:
         label = f"{label} ({variant})"
     return label
+
+def normalize_source_id(raw):
+    raw = (raw or "").strip().strip("'\"")
+    if not raw:
+        return ""
+    if raw.startswith("xkb:"):
+        return ibus_engine_to_source_id(raw)
+    if "(" in raw and raw.endswith(")"):
+        return include_to_source_id(raw)
+    if "+" in raw:
+        layout, variant = raw.split("+", 1)
+        return source_id_from_layout_variant(layout, variant)
+    return raw
 
 def make_added_item(source_id, kind="system-added"):
     source_id = normalize_source_id(source_id)
@@ -106,12 +141,6 @@ def enrich_added_items_from_system(added_items, system_items):
             item["description"] = match["description"]
     return added_items
 
-def _uok_default_system_id(profile_id):
-    profile_id = str(profile_id or "").strip()
-    if not profile_id:
-        return ""
-    return profile_id if profile_id.startswith("uok_") else "uok_" + profile_id
-
 def read_uok_profiles(profiles_dir):
     profiles_dir = Path(profiles_dir).expanduser()
     symbols_dir = Path.home() / ".xkb" / "symbols"
@@ -128,10 +157,9 @@ def read_uok_profiles(profiles_dir):
             profile_id = data.get("id") or profile_file.stem
             name = data.get("name") or profile_id
             xkb_file = data.get("xkb_file") or str(symbols_dir / profile_id)
-            system_xkb_id = data.get("system_xkb_id") or _uok_default_system_id(profile_id)
             seen_ids.add(profile_id)
             out.append({"section":"UOK","kind":"uok","id":f"uok:{profile_id}","source_id":profile_id,"include":profile_id,"label":name,"description":profile_id,
-                "xkb_file":xkb_file,"system_xkb_id":system_xkb_id,"wayland_ready":bool(data.get("wayland_ready") or data.get("system_xkb_id"))})
+                "xkb_file":xkb_file})
     # Also show user XKB symbol files that do not have a JSON profile.
     if symbols_dir.exists():
         for xkb_file in sorted(symbols_dir.iterdir()):
@@ -146,6 +174,19 @@ def read_uok_profiles(profiles_dir):
             out.append({"section":"UOK","kind":"uok","id":f"uok:{profile_id}","source_id":profile_id,"include":profile_id,"label":profile_id,
                 "description":str(xkb_file),"xkb_file":str(xkb_file)})
     return out
+
+def read_gsettings_array(schema, key):
+    result = run(["gsettings", "get", schema, key])
+    if result.returncode != 0:
+        return []
+    raw = result.stdout.strip()
+    try:
+        value = ast.literal_eval(raw)
+    except Exception:
+        value = re.findall(r"'([^']+)'", raw)
+    if isinstance(value, (list, tuple)):
+        return [str(x) for x in value]
+    return []
 
 def read_gnome_added_sources():
     result = run(["gsettings", "get", "org.gnome.desktop.input-sources", "sources"])
@@ -166,12 +207,36 @@ def read_libgnomekbd_keyboard_layouts_added():
     return unique_items(make_added_item(normalize_source_id(layout), "libgnomekbd-layout") for layout in layouts if normalize_source_id(layout))
 
 def read_setxkbmap_added_sources(kind="xkb-active"):
+    result = run(["setxkbmap", "-query"])
+    if result.returncode != 0:
+        return []
+    layouts = []
+    variants = []
+    for line in result.stdout.splitlines():
+        clean = line.strip()
+        if clean.startswith("layout:"):
+            layouts = split_csv_nonempty(clean.split(":", 1)[1].strip())
+        elif clean.startswith("variant:"):
+            variants = split_csv_keep_empty(clean.split(":", 1)[1].strip())
+    while len(variants) < len(layouts):
+        variants.append("")
     out = []
-    for layout, variant in setxkbmap_layout_variant_pairs():
+    for layout, variant in zip(layouts, variants):
         source_id = source_id_from_layout_variant(layout, variant)
         if source_id:
             out.append(make_added_item(source_id, kind))
     return unique_items(out)
+
+def ibus_engine_to_source_id(engine):
+    engine = str(engine or "").strip().strip("'\"")
+    if not engine.startswith("xkb:"):
+        return ""
+    parts = engine.split(":")
+    if len(parts) < 2:
+        return ""
+    layout = parts[1].strip()
+    variant = parts[2].strip() if len(parts) >= 3 else ""
+    return source_id_from_layout_variant(layout, variant)
 
 def read_ibus_added_sources(kind="ibus"):
     engines = []
@@ -185,6 +250,12 @@ def read_ibus_added_sources(kind="ibus"):
         if source_id:
             out.append(make_added_item(source_id, kind))
     return unique_items(out)
+
+def xfconf_get(channel, prop):
+    result = run(["xfconf-query", "-c", channel, "-p", prop])
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
 
 def read_xfce_keyboard_sources():
     layouts = split_csv_nonempty(xfconf_get("keyboard-layout", "/Default/XkbLayout"))
@@ -285,6 +356,56 @@ def read_kde_kxkbrc_sources():
             out.append(make_added_item(source_id, "kde-kxkbrc"))
     return unique_items(out)
 
+
+def _lxqt_clean_conf_value(value):
+    value = str(value or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    return value
+
+
+def read_lxqt_session_sources():
+    path = Path.home() / ".config" / "lxqt" / "session.conf"
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+
+    in_keyboard = False
+    layout_raw = ""
+    variant_raw = ""
+    for line in text.splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith(("#", ";")):
+            continue
+        if clean.startswith("[") and clean.endswith("]"):
+            in_keyboard = clean.strip("[]").strip().lower() == "keyboard"
+            continue
+        if not in_keyboard or "=" not in clean:
+            continue
+        key, value = clean.split("=", 1)
+        key = key.strip().lower()
+        value = _lxqt_clean_conf_value(value)
+        if key == "layout":
+            layout_raw = value
+        elif key == "variant":
+            variant_raw = value
+
+    layouts = split_csv_nonempty(layout_raw)
+    variants = split_csv_keep_empty(variant_raw) if variant_raw else []
+    while len(variants) < len(layouts):
+        variants.append("")
+
+    out = []
+    for layout, variant in zip(layouts, variants):
+        source_id = source_id_from_layout_variant(layout, variant)
+        if source_id:
+            out.append(make_added_item(source_id, "lxqt-session"))
+    return unique_items(out)
+
+
 def read_added_sources():
     items = []
     if is_desktop("xfce"):
@@ -309,6 +430,11 @@ def read_added_sources():
         items.extend(read_ibus_added_sources("mate-ibus"))
         items.extend(read_setxkbmap_added_sources("mate-xkb-active"))
     elif is_desktop("lxqt"):
+        # LXQt stores the list configured from lxqt-config-input in
+        # ~/.config/lxqt/session.conf. Use it before the live XKB map,
+        # because activating a UOK profile can temporarily collapse
+        # setxkbmap -query to the profile base layout.
+        items.extend(read_lxqt_session_sources())
         items.extend(read_setxkbmap_added_sources("lxqt-setxkbmap"))
         items.extend(read_ibus_added_sources("lxqt-ibus"))
     else:
@@ -318,41 +444,17 @@ def read_added_sources():
             items.extend(read_setxkbmap_added_sources("xkb-active"))
     return unique_items(items)
 
-def _uok_norm_source_id(value):
-    return re.sub(r"_+", "_", str(value or "").strip()).lower()
-
 def build_sources(uok_items, added_items, system_items):
     added_items = enrich_added_items_from_system(unique_items(added_items), system_items)
-    # If a UOK profile has been installed into GNOME as a system XKB source for
-    # Wayland, GNOME also reports it in input-sources. Keep only the UOK-facing
-    # item in menus/editor, otherwise the same keyboard appears twice and the
-    # user can click the implementation detail instead of the profile.
-    uok_system_ids = set()
-    for item in uok_items:
-        for key in ("system_xkb_id", "source_id"):
-            value = item.get(key)
-            if value:
-                uok_system_ids.add(str(value))
-                uok_system_ids.add(_uok_norm_source_id(value))
-    def is_uok_system_item(item):
-        source_id = item.get("source_id", "")
-        include = item.get("include", "")
-        candidates = {source_id, include, _uok_norm_source_id(source_id), _uok_norm_source_id(include)}
-        return bool(candidates & uok_system_ids)
-
-    added_items = [item for item in added_items if not (item.get("kind") != "uok" and is_uok_system_item(item))]
     added_source_ids = {item["source_id"] for item in added_items}
     added_includes = {item["include"] for item in added_items}
     other_items = [item for item in system_items
-        if item["source_id"] not in added_source_ids
-        and item["include"] not in added_includes
-        and not is_uok_system_item(item)]
+        if item["source_id"] not in added_source_ids and item["include"] not in added_includes]
     return uok_items + added_items + other_items
 
 def load_xkb_sources(current_profile_file, profiles_dir):
     # current_profile_file is kept for API compatibility with the rest of UOK.
     del current_profile_file
-    uok_items = read_uok_profiles(profiles_dir)
     added_items = read_added_sources()
     system_items = parse_system_xkb_sources()
     return build_sources(uok_items, added_items, system_items)
