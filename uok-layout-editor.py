@@ -20,7 +20,7 @@ from pathlib import Path
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk
-from uok_xkb_symbols import keysym_to_text, text_to_keysym, SPECIAL_KEYSYMS
+from uok_xkb_symbols import keysym_to_text, text_to_keysym, validate_keysym_text, SPECIAL_KEYSYMS
 from uok_xkb_sources import load_xkb_sources, source_id_to_include, layout_label
 from uok_backends.session import desktop_text
 
@@ -456,8 +456,15 @@ def keycap_symbol(symbols, fallback):
 
 def normalized_symbols_for_values(values):
     syms = []
-    for v in values:
-        syms.append(text_to_keysym(v) or "NoSymbol")
+    for index, v in enumerate(values):
+        raw = v or ""
+        if not raw.strip():
+            syms.append("NoSymbol")
+            continue
+        ok, message = validate_keysym_text(raw)
+        if not ok:
+            raise ValueError(message or f"Valor inválido en el nivel {index + 1}: {raw}")
+        syms.append(text_to_keysym(raw) or "NoSymbol")
     while len(syms) < 4:
         syms.append("NoSymbol")
     return syms[:4]
@@ -1761,16 +1768,35 @@ class UokLayoutEditor(Gtk.Window):
 
     def on_edit_key(self, _button, code):
         dialog = EditKeyDialog(self, code, self.entry_values_for_code(code))
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            new_symbols = normalized_symbols_for_values(dialog.values())
-            base = self.base_for_code(code)
-            if new_symbols == base:
-                self.changes.pop(code, None)
-            else:
-                self.changes[code] = new_symbols
-            self.refresh_button(code)
-        dialog.destroy()
+        try:
+            while True:
+                response = dialog.run()
+                if response != Gtk.ResponseType.OK:
+                    break
+                try:
+                    new_symbols = normalized_symbols_for_values(dialog.values())
+                except ValueError as exc:
+                    error_dialog = Gtk.MessageDialog(
+                        transient_for=dialog,
+                        flags=Gtk.DialogFlags.MODAL,
+                        message_type=Gtk.MessageType.ERROR,
+                        buttons=Gtk.ButtonsType.OK,
+                        text="Valor de tecla no válido",
+                    )
+                    error_dialog.format_secondary_text(str(exc))
+                    error_dialog.run()
+                    error_dialog.destroy()
+                    continue
+
+                base = self.base_for_code(code)
+                if new_symbols == base:
+                    self.changes.pop(code, None)
+                else:
+                    self.changes[code] = new_symbols
+                self.refresh_button(code)
+                break
+        finally:
+            dialog.destroy()
 
     def on_add_physical_key(self, _button):
         dialog = CaptureKeyDialog(self, self.keycode_to_name)

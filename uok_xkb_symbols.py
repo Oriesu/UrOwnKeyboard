@@ -115,22 +115,40 @@ def text_to_keysym(value):
     value = (value or "").strip()
     if not value:
         return None
+    if value in {"NoSymbol", "VoidSymbol"}:
+        return value
     if value == " ":
         return "space"
     if value in DISPLAY_TO_KEYSYM:
         return DISPLAY_TO_KEYSYM[value]
-    # Accept visible combining marks such as ◌̃ by removing the dotted circle.
+
     if value.startswith(COMBINING_DOTTED_CIRCLE) and len(value) == 2:
         value = value[1]
-    # If the user typed a valid keysym name directly, keep it as-is.
-    if Gdk.keyval_from_name(value):
-        return value
+
     if len(value) == 1:
         keyval = Gdk.unicode_to_keyval(ord(value))
         name = Gdk.keyval_name(keyval)
         if name:
             return name
         return f"U{ord(value):04X}"
-    return value
+
+    keyval = Gdk.keyval_from_name(value)
+    void_symbol = getattr(Gdk, "KEY_VoidSymbol", 0xFFFFFF)
+    if keyval not in (0, void_symbol):
+        return value
+
+    return None
+
+def validate_keysym_text(value):
+    raw = value or ""
+    if not raw.strip():
+        return True, None
+    if text_to_keysym(raw) is not None:
+        return True, None
+    return False, (
+        f"'{raw}' no es un símbolo XKB válido. "
+        "Cada nivel de una tecla sólo puede emitir un carácter o un keysym "
+        "como ntilde, less, Return o dead_acute; no puede emitir cadenas como 'll'."
+    )
 
 __all__ = ["COMBINING_DOTTED_CIRCLE","KEYSYM_TO_DISPLAY","DISPLAY_TO_KEYSYM","SPECIAL_KEYSYMS","unicode_keysym_to_char","maybe_visible_combining_char","keysym_to_text","text_to_keysym"]
