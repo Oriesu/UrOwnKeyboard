@@ -455,6 +455,7 @@ def build_sources(uok_items, added_items, system_items):
 def load_xkb_sources(current_profile_file, profiles_dir):
     # current_profile_file is kept for API compatibility with the rest of UOK.
     del current_profile_file
+    uok_items = read_uok_profiles(profiles_dir)
     added_items = read_added_sources()
     system_items = parse_system_xkb_sources()
     return build_sources(uok_items, added_items, system_items)
