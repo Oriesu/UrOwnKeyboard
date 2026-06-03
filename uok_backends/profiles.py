@@ -12,7 +12,6 @@ def profile_is_custom_xkb(profile):
 
 def unsupported_gnome_wayland_message(profile):
     name = profile_name(profile)
-
     return ("Este perfil UOK usa una distribución XKB propia.\n\n""En GNOME Wayland UOK todavía no puede aplicar perfiles XKB personalizados "
         "con setxkbmap/xkbcomp, porque no cambian el layout real del compositor.\n\n"f"Perfil no aplicado: {name}\n\n"
         "Usa GNOME X11 para perfiles propios, o instala esta distribución como ""fuente XKB del sistema/GNOME.")

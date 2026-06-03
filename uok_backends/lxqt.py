@@ -86,14 +86,11 @@ def install(app):
     def abrir_ajustes_teclado(_item=None):
         return _open_lxqt_keyboard_settings(app,base_open_keyboard_settings,_item)
 
-    def uok_lxqt_append_system_sources_to_menu(_menu):
+    def uok_lxqt_append_sources(_menu):
         # Las fuentes ya se leen desde get_sources()/uok_xkb_sources.py.
         # Aquí sólo ocultamos indicadores nativos de LXQt/IBus.
         _hide_native_input_indicators(app)
 
-    app.uok_is_lxqt_desktop = _is_lxqt
-    app.uok_lxqt_panel_conf_path = _panel_conf_path
-    app.uok_lxqt_hide_native_input_indicators = lambda: _hide_native_input_indicators(app)
-    app.uok_lxqt_remove_legacy_tray_keep_statusnotifier = _remove_legacy_tray_keep_statusnotifier
-    app.uok_lxqt_append_system_sources_to_menu = uok_lxqt_append_system_sources_to_menu
+    app.uok_lxqt_cleanup_tray = _remove_legacy_tray_keep_statusnotifier
+    app.uok_lxqt_append_sources = uok_lxqt_append_sources
     app.abrir_ajustes_teclado = abrir_ajustes_teclado

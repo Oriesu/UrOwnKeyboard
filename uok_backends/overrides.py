@@ -3,8 +3,7 @@ from . import gnome_wayland
 from .profiles import profile_is_custom_xkb
 from .activation import block_custom_profile_in_gnome_wayland
 
-IBUS_ENGINE_BY_XKB = {"es": "xkb:es::spa","de": "xkb:de::ger","us": "xkb:us::eng","gb": "xkb:gb::eng","fr": "xkb:fr::fra","it": "xkb:it::ita",
-    "pt": "xkb:pt::por"}
+IBUS_ENGINE_BY_XKB = {"es":"xkb:es::spa","de":"xkb:de::ger","us":"xkb:us::eng","gb":"xkb:gb::eng","fr":"xkb:fr::fra","it":"xkb:it::ita","pt":"xkb:pt::por"}
 
 class _DummyProcess:
     returncode = 0
@@ -65,7 +64,6 @@ def _show_blocked_profile_warning(app, profile):
         pass
 
 def install(app):
-    print("UOK DEBUG: overrides.py install cargado")
     base_run_menu_cmd = app.run_menu_cmd
     base_sh = getattr(app, "sh", None)
     base_subprocess_run = app.subprocess.run

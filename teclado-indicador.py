@@ -266,10 +266,10 @@ except Exception as exc:
     print(f'UOK LXQt backend disabled: {exc}')
 
 def crear_menu():
-    call_optional_hook("uok_lxqt_remove_legacy_tray_keep_statusnotifier")
+    call_optional_hook("uok_lxqt_cleanup_tray")
     menu = Gtk.Menu()
     sources = get_sources()
-    for hook in ("uok_mate_append_system_sources_to_menu","uok_cinnamon_append_system_sources_to_menu","uok_lxqt_append_system_sources_to_menu"):
+    for hook in ("uok_mate_append_system_sources_to_menu","uok_cinnamon_append_sources","uok_lxqt_append_sources"):
         call_optional_hook(hook, menu)
     for index, source in enumerate(sources):
         if len(source) != 2:
@@ -432,7 +432,7 @@ indicator.set_menu(uok_main_menu)
 
 def uok_enable_cinnamon_status_icon(menu):
     try:
-        if not uok_is_cinnamon():
+        if not uok_cinnamon_active():
             return None
     except Exception:
         return None
@@ -461,10 +461,8 @@ uok_cinnamon_status_icon = uok_enable_cinnamon_status_icon(uok_main_menu)
 # En Cinnamon, si el fallback Gtk.StatusIcon existe, ocultamos el AppIndicator
 # para que no aparezcan dos menús UOK. En GNOME/XFCE no cambia nada.
 try:
-    if uok_cinnamon_status_icon is not None and uok_is_cinnamon():
+    if uok_cinnamon_status_icon is not None and uok_cinnamon_active():
         indicator.set_status(AppIndicator3.IndicatorStatus.PASSIVE)
 except Exception:
     pass
-
 Gtk.main()
-

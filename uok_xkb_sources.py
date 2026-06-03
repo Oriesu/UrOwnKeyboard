@@ -400,42 +400,6 @@ def build_sources(uok_items, added_items, system_items):
 def load_xkb_sources(current_profile_file, profiles_dir):
     # current_profile_file is kept for API compatibility with the rest of UOK.
     del current_profile_file
-    uok_items = read_uok_profiles(profiles_dir)
     added_items = read_added_sources()
     system_items = parse_system_xkb_sources()
     return build_sources(uok_items, added_items, system_items)
-
-uok_desktop_name = desktop_name
-uok_is_xfce = lambda: is_desktop("xfce")
-uok_split_csv = split_csv_nonempty
-uok_split_csv_keep_empty = split_csv_keep_empty
-uok_split_csv_nonempty = split_csv_nonempty
-uok_source_id_from_layout_variant = source_id_from_layout_variant
-uok_make_added_item = make_added_item
-uok_unique_added_items = unique_items
-uok_read_setxkbmap_added_sources = read_setxkbmap_added_sources
-uok_read_xfce_keyboard_sources = read_xfce_keyboard_sources
-uok_read_xkb_plugin_sources = read_xfce_xkb_plugin_sources
-uok_read_added_sources = read_added_sources
-uok_v6_sources_desktop_name = desktop_name
-uok_v6_sources_is_xfce = lambda: is_desktop("xfce")
-uok_v6_sources_make_item = make_added_item
-uok_v6_sources_unique = unique_items
-uok_v6_sources_from_keyboard_layout = read_xfce_keyboard_sources
-uok_v6_sources_from_setxkbmap = read_setxkbmap_added_sources
-uok_v6_ibus_engine_to_source_id = ibus_engine_to_source_id
-uok_v6_sources_from_ibus = read_ibus_added_sources
-uok_kde_editor_desktop_name = desktop_name
-uok_kde_editor_is_kde = lambda: is_desktop("kde", "plasma")
-uok_kde_final_is_kde = lambda: is_desktop("kde", "plasma")
-uok_kde_editor_sources_from_kxkbrc = read_kde_kxkbrc_sources
-uok_kde_final_from_kxkbrc = read_kde_kxkbrc_sources
-uok_kde_editor_sources_from_setxkbmap = read_setxkbmap_added_sources
-uok_kde_final_from_setxkbmap = read_setxkbmap_added_sources
-uok_kde_editor_sources_from_ibus = read_ibus_added_sources
-uok_kde_final_from_ibus = read_ibus_added_sources
-uok_cinnamon_editor_is_cinnamon = lambda: is_desktop("cinnamon")
-uok_cinnamon_editor_from_setxkbmap = lambda: read_setxkbmap_added_sources("cinnamon-xkb-active")
-uok_cinnamon_editor_from_ibus = lambda: read_ibus_added_sources("cinnamon-ibus")
-uok_lxqt_is_desktop = lambda: is_desktop("lxqt")
-uok_lxqt_sources_from_setxkbmap = lambda: read_setxkbmap_added_sources("lxqt-setxkbmap")

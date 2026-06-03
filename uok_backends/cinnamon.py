@@ -34,12 +34,11 @@ def install(app):
         if base_hide_xfce_menu is not None:
             return base_hide_xfce_menu()
 
-    def uok_cinnamon_append_system_sources_to_menu(_menu):
+    def uok_cinnamon_append_sources(_menu):
         # Las fuentes del sistema ya se leen desde get_sources()/uok_xkb_sources.py.
         return
 
-    app.uok_is_cinnamon_desktop = _is_cinnamon
-    app.uok_is_cinnamon = _is_cinnamon
-    app.uok_cinnamon_append_system_sources_to_menu = uok_cinnamon_append_system_sources_to_menu
+    app.uok_cinnamon_active = _is_cinnamon
+    app.uok_cinnamon_append_sources = uok_cinnamon_append_sources
     app.abrir_ajustes_teclado = abrir_ajustes_teclado
     app.ocultar_menu_xfce = ocultar_menu_xfce

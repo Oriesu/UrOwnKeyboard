@@ -22,13 +22,10 @@ def helper_exists():
 def off():
     if not HELPER.exists():
         return KeydResult(True)
-
     # El helper de UOK acepta --off en versiones recientes.
     result = _run(["sudo", "-n", str(HELPER), "--off"])
-
     if result.returncode == 0:
         return KeydResult(True, result.stdout, result.stderr, result.returncode)
-
     # Compatibilidad con helpers antiguos que usaban argumento vacío.
     fallback = _run(["sudo", "-n", str(HELPER), ""])
     return KeydResult(fallback.returncode == 0,fallback.stdout + result.stdout,fallback.stderr + result.stderr,fallback.returncode)
@@ -36,21 +33,15 @@ def off():
 def apply_conf(path):
     if not path:
         return off()
-
     keyd_path = Path(path).expanduser()
-
     if not keyd_path.exists():
         return KeydResult(False, stderr=f"keyd.conf no existe: {keyd_path}", returncode=1)
-
     result = _run(["sudo", "-n", str(HELPER), str(keyd_path)])
-
     return KeydResult(result.returncode == 0,result.stdout,result.stderr,result.returncode)
-
 
 def is_service_active():
     result = _run(["systemctl", "is-active", "keyd"])
     return result.returncode == 0 and result.stdout.strip() == "active"
-
 
 def stop_service():
     result = _run(["sudo", "systemctl", "stop", "keyd"])
