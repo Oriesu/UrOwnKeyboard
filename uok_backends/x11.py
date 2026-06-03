@@ -1,7 +1,7 @@
 import shlex
 import subprocess
 from .result import ActivationResult
-
+from .session import is_wayland
 
 def run(cmd):
     return subprocess.run(
@@ -44,18 +44,25 @@ def current_variant():
 
 
 def current_spec():
+    if is_wayland():
+        return ""
     result = query()
     if result.returncode != 0:
         return ""
-
     data = parse_query_text(result.stdout)
-    layout = data.get("layout", "")
-    variant = data.get("variant", "")
-
-    if variant:
-        return f"{layout}({variant})"
-
-    return layout
+    layout_raw = (data.get("layout") or "").strip()
+    variant_raw = (data.get("variant") or "").strip()
+    if not layout_raw:
+        return ""
+    layouts = [x.strip() for x in layout_raw.split(",") if x.strip()]
+    variants = [x.strip() for x in variant_raw.split(",")] if variant_raw else []
+    if not layouts:
+        return ""
+    while len(variants) < len(layouts):
+        variants.append("")
+    layout = layouts[0]
+    variant = variants[0]
+    return f"{layout}({variant})" if variant else layout
 
 
 def source_to_setxkbmap_cmd(source_type, source_id):

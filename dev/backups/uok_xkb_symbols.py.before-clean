@@ -1,0 +1,164 @@
+import re
+import gi
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk
+
+COMBINING_DOTTED_CIRCLE = "\u25cc"
+_COMBINING_MARK_RANGES = ((0x0300, 0x036F), (0x1AB0, 0x1AFF), (0x1DC0, 0x1DFF), (0x20D0, 0x20FF), (0xFE20, 0xFE2F),)
+_COMBINING_DISPLAYS = {"combining_tilde": COMBINING_DOTTED_CIRCLE + "\u0303", "combining_belowdot": COMBINING_DOTTED_CIRCLE + "\u0323",
+    "combining_acute": COMBINING_DOTTED_CIRCLE + "\u0301", "combining_grave": COMBINING_DOTTED_CIRCLE + "\u0300",
+    "combining_hook": COMBINING_DOTTED_CIRCLE + "\u0309", "combining_abovedot": COMBINING_DOTTED_CIRCLE + "\u0307",
+    "combining_diaeresis": COMBINING_DOTTED_CIRCLE + "\u0308", "combining_macron": COMBINING_DOTTED_CIRCLE + "\u0304",
+    "combining_circumflex": COMBINING_DOTTED_CIRCLE + "\u0302", "combining_caron": COMBINING_DOTTED_CIRCLE + "\u030c",
+    "combining_breve": COMBINING_DOTTED_CIRCLE + "\u0306", "combining_ringabove": COMBINING_DOTTED_CIRCLE + "\u030a",
+    "combining_cedilla": COMBINING_DOTTED_CIRCLE + "\u0327", "combining_ogonek": COMBINING_DOTTED_CIRCLE + "\u0328"}
+
+KEYSYM_TO_DISPLAY = {
+    # Empty / spacing.
+    "NoSymbol": "", "VoidSymbol": "", "space": "Space",
+
+    # Common aliases.
+    "ordmasculine": "º", "masculine": "º", "ordfeminine": "ª", "feminine": "ª",
+
+    # Guillemets and quotation marks. Several spellings appear in real maps.
+    "guillemotleft": "«", "guillemotright": "»", "guillemetleft": "«", "guillemetright": "»", "gillemetleft": "«", "gillemetright": "»",
+    "leftdoublequotemark": "“", "rightdoublequotemark": "”", "singlelowquotemark": "‚", "doublelowquotemark": "„",
+
+    # Dead keys.
+    "dead_acute": "´", "dead_grave": "`", "dead_circumflex": "^", "dead_diaeresis": "¨", "dead_tilde": "~", "dead_macron": "¯", "dead_breve": "˘",
+    "dead_abovedot": "˙", "dead_abovering": "˚", "dead_doubleacute": "˝", "dead_caron": "ˇ", "dead_cedilla": "¸", "dead_ogonek": "˛", "dead_iota": "ͅ",
+    "dead_voiced_sound": "゛", "dead_semivoiced_sound": "゜",
+
+    # Dead keys used by Ethiopic/Amharic layouts.
+    "dead_a": "◌a", "dead_A": "◌A", "dead_e": "◌e", "dead_E": "◌E", "dead_i": "◌i", "dead_I": "◌I", "dead_o": "◌o", "dead_O": "◌O", "dead_u": "◌u",
+    "dead_U": "◌U", "dead_schwa": "◌ə", "dead_SCHWA": "◌Ə", "dead_belowdot": "◌̣", "dead_belowcomma": "◌̦",
+
+    # Combining names rendered visibly with dotted circle.
+    **_COMBINING_DISPLAYS,
+
+    # Special/navigation keys.
+    "Tab": "Tab", "ISO_Left_Tab": "⇤", "BackSpace": "⌫", "Return": "Enter", "Escape": "Esc", "Delete": "Del", "Insert": "Ins", "Home": "Home",
+    "End": "End", "Prior": "PgUp", "Next": "PgDn", "Left": "←", "Right": "→", "Up": "↑", "Down": "↓", "Caps_Lock": "Caps", "Shift_L": "Shift",
+    "Shift_R": "Shift", "Control_L": "Ctrl", "Control_R": "Ctrl", "Alt_L": "Alt", "Alt_R": "Alt", "Super_L": "Super", "Super_R": "Super",
+    "Menu": "Menu", "Multi_key": "Compose",
+
+    # XKB level modifiers.
+    "ISO_Level3_Shift": "AltGr", "ISO_Level3_Latch": "AltGr⇧", "ISO_Level3_Lock": "AltGr⇩", "ISO_Level5_Shift": "Lvl5", "ISO_Level5_Latch": "Lvl5⇧",
+    "ISO_Level5_Lock": "Lvl5⇩"}
+
+_BRAILLE_DOT_DISPLAY = {1: "⠁", 2: "⠂", 3: "⠄", 4: "⡀", 5: "⠈", 6: "⠐", 7: "⠠", 8: "⢀", 9: "B9", 10: "B10"}
+
+for _dot, _display in _BRAILLE_DOT_DISPLAY.items():
+    KEYSYM_TO_DISPLAY[f"braille_dot_{_dot}"] = _display
+
+# Reverse map used by the editor when saving. Prefer canonical spellings when
+# several keysyms render as the same glyph.
+DISPLAY_TO_KEYSYM = {
+    value: key
+    for key, value in KEYSYM_TO_DISPLAY.items()
+    if value
+}
+
+DISPLAY_TO_KEYSYM.update({
+    "º": "ordmasculine", "ª": "ordfeminine", "«": "guillemotleft", "»": "guillemotright",
+
+    "AltGr⇧": "ISO_Level3_Latch", "AltGr⇩": "ISO_Level3_Lock", "Lvl5": "ISO_Level5_Shift", "Lvl5⇧": "ISO_Level5_Latch", "Lvl5⇩": "ISO_Level5_Lock",
+
+    "´": "dead_acute", "`": "dead_grave", "^": "dead_circumflex", "¨": "dead_diaeresis", "~": "dead_tilde", "¯": "dead_macron", "˘": "dead_breve",
+    "˙": "dead_abovedot", "˚": "dead_abovering", "˝": "dead_doubleacute", "ˇ": "dead_caron", "¸": "dead_cedilla", "˛": "dead_ogonek",
+
+    "◌a": "dead_a", "◌A": "dead_A", "◌e": "dead_e", "◌E": "dead_E", "◌i": "dead_i", "◌I": "dead_I", "◌o": "dead_o", "◌O": "dead_O", "◌u": "dead_u",
+    "◌U": "dead_U", "◌ə": "dead_schwa", "◌Ə": "dead_SCHWA", "◌̣": "dead_belowdot", "◌̦": "dead_belowcomma"})
+
+DISPLAY_TO_KEYSYM.update({display: name for name, display in _COMBINING_DISPLAYS.items()})
+DISPLAY_TO_KEYSYM.update({_display: f"braille_dot_{_dot}" for _dot, _display in _BRAILLE_DOT_DISPLAY.items()})
+
+
+def unicode_keysym_to_char(sym):
+    sym = (sym or "").strip()
+
+    # XKB symbolic format: U10578, U010578, U00010578.
+    if re.fullmatch(r"U[0-9A-Fa-f]{4,8}", sym):
+        try:
+            codepoint = int(sym[1:], 16)
+        except Exception:
+            return None
+        return _chr_or_none(codepoint)
+
+    # X11/GDK Unicode keysym format: 0x01000000 | codepoint.
+    # Preserve the final override behavior: plain hexadecimal values that are
+    # not Unicode keysyms are ignored instead of being rendered as characters.
+    if re.fullmatch(r"0x[0-9A-Fa-f]+", sym):
+        try:
+            value = int(sym, 16)
+        except Exception:
+            return None
+        if not (0x01000000 <= value <= 0x0110FFFF):
+            return None
+        return _chr_or_none(value & 0x00FFFFFF)
+    return None
+
+def _chr_or_none(codepoint):
+    if not (0 < codepoint <= 0x10FFFF):
+        return None
+    try:
+        return chr(codepoint)
+    except Exception:
+        return None
+
+def maybe_visible_combining_char(ch):
+    if not ch or len(ch) != 1:
+        return ch
+    codepoint = ord(ch)
+    if any(start <= codepoint <= end for start, end in _COMBINING_MARK_RANGES):
+        return COMBINING_DOTTED_CIRCLE + ch
+    return ch
+
+
+def keysym_to_text(sym):
+    sym = (sym or "").strip()
+    if sym in KEYSYM_TO_DISPLAY:
+        return KEYSYM_TO_DISPLAY[sym]
+    if not sym:
+        return ""
+    ch = unicode_keysym_to_char(sym)
+    if ch is not None:
+        return maybe_visible_combining_char(ch)
+    keyval = Gdk.keyval_from_name(sym)
+    if keyval:
+        codepoint = Gdk.keyval_to_unicode(keyval)
+        if codepoint:
+            ch = _chr_or_none(codepoint)
+            if ch is not None:
+                return maybe_visible_combining_char(ch)
+    if len(sym) == 1:
+        return sym
+    return sym
+
+
+def text_to_keysym(value):
+    value = (value or "").strip()
+    if not value:
+        return None
+    if value == " ":
+        return "space"
+    if value in DISPLAY_TO_KEYSYM:
+        return DISPLAY_TO_KEYSYM[value]
+
+    # Accept visible combining marks such as ◌̃ by removing the dotted circle.
+    if value.startswith(COMBINING_DOTTED_CIRCLE) and len(value) == 2:
+        value = value[1]
+
+    # If the user typed a valid keysym name directly, keep it as-is.
+    if Gdk.keyval_from_name(value):
+        return value
+    if len(value) == 1:
+        keyval = Gdk.unicode_to_keyval(ord(value))
+        name = Gdk.keyval_name(keyval)
+        if name:
+            return name
+        return f"U{ord(value):04X}"
+    return value
+
+__all__ = ["COMBINING_DOTTED_CIRCLE", "KEYSYM_TO_DISPLAY", "DISPLAY_TO_KEYSYM", "unicode_keysym_to_char", "maybe_visible_combining_char",
+    "keysym_to_text", "text_to_keysym"]

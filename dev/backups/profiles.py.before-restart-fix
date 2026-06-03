@@ -17,6 +17,9 @@ def unsupported_gnome_wayland_message(profile):
         "con setxkbmap/xkbcomp, porque no cambian el layout real del compositor.\n\n"f"Perfil no aplicado: {name}\n\n"
         "Usa GNOME X11 para perfiles propios, o instala esta distribución como ""fuente XKB del sistema/GNOME.")
 
+# --------------------------------------------------------------------
+# Profile UI functions extracted from teclado-indicador.py
+# --------------------------------------------------------------------
 def load_profiles():
     profiles = []
     for file in sorted(PROFILES.glob("*.json")):
@@ -256,6 +259,10 @@ def abrir_editor_visual(_item=None):
 _PROFILE_FUNCTIONS = ['load_profiles', 'crear_layout_visual', 'importar_configuracion', 'borrar_si_seguro', 'uok_profile_is_current',
     'uok_safe_before_delete_profile', 'eliminar_configuracion', 'get_current_profile', 'get_xkb_spec_actual', 'mostrar_distribucion_actual',
     'mostrar_texto', 'mostrar_configuracion_completa', 'abrir_editor_visual']
+
+# --------------------------------------------------------------------
+# Profile UI backend installation
+# --------------------------------------------------------------------
 
 def _bind_app_globals(app):
     module_globals = globals()

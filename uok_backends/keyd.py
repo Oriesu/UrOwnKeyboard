@@ -1,9 +1,7 @@
 from pathlib import Path
 import subprocess
 
-
 HELPER = Path("/usr/local/sbin/keyd-aplicar-conf")
-
 
 class KeydResult:
     def __init__(self, ok, stdout="", stderr="", returncode=0):
@@ -11,25 +9,15 @@ class KeydResult:
         self.stdout = stdout or ""
         self.stderr = stderr or ""
         self.returncode = int(returncode or 0)
-
     @property
     def combined(self):
         return (self.stdout + "\n" + self.stderr).strip()
 
-
 def _run(cmd):
-    return subprocess.run(
-        [str(x) for x in cmd],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-
+    return subprocess.run([str(x) for x in cmd],text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=False)
 
 def helper_exists():
     return HELPER.exists()
-
 
 def off():
     if not HELPER.exists():
@@ -43,13 +31,7 @@ def off():
 
     # Compatibilidad con helpers antiguos que usaban argumento vacío.
     fallback = _run(["sudo", "-n", str(HELPER), ""])
-    return KeydResult(
-        fallback.returncode == 0,
-        fallback.stdout + result.stdout,
-        fallback.stderr + result.stderr,
-        fallback.returncode,
-    )
-
+    return KeydResult(fallback.returncode == 0,fallback.stdout + result.stdout,fallback.stderr + result.stderr,fallback.returncode)
 
 def apply_conf(path):
     if not path:
@@ -62,12 +44,7 @@ def apply_conf(path):
 
     result = _run(["sudo", "-n", str(HELPER), str(keyd_path)])
 
-    return KeydResult(
-        result.returncode == 0,
-        result.stdout,
-        result.stderr,
-        result.returncode,
-    )
+    return KeydResult(result.returncode == 0,result.stdout,result.stderr,result.returncode)
 
 
 def is_service_active():
@@ -77,13 +54,7 @@ def is_service_active():
 
 def stop_service():
     result = _run(["sudo", "systemctl", "stop", "keyd"])
-    return KeydResult(
-        result.returncode == 0,
-        result.stdout,
-        result.stderr,
-        result.returncode,
-    )
-
+    return KeydResult(result.returncode == 0,result.stdout,result.stderr,result.returncode)
 
 def apply_profile_or_off(profile):
     keyd_conf = profile.get("keyd_conf") if profile else None

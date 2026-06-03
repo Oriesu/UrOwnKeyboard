@@ -1,6 +1,7 @@
 # Backups y archivos rotos generados durante pruebas
 *.bak
 *.bak.*
+*.bak-*
 *.broken
 *.broken.*
 *.tmp
@@ -44,11 +45,3 @@ build/
 
 # Archivos generados por instalación local, si alguna vez aparecen en el repo
 teclado-indicador.desktop
-dev/backups/
-
-# Python cache
-__pycache__/
-*.py[cod]
-
-# Development backups
-dev/backups/
