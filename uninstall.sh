@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-EXT_UUID="hide-input-source@teclado-indicador"
+EXT_UUID="hide-input-source@urownkeyboard"
 pkill -f teclado-indicador.py || true
 gnome-extensions disable "$EXT_UUID" 2>/dev/null || true
 rm -f "$HOME/.local/bin/teclado-indicador.py"

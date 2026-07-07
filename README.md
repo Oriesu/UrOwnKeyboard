@@ -94,7 +94,7 @@ Después de instalar, se recomienda cerrar sesión y volver a entrar.
 En GNOME, si el indicador nativo sigue apareciendo, ejecuta:
 
 ```bash
-gnome-extensions enable hide-input-source@teclado-indicador
+gnome-extensions enable hide-input-source@urownkeyboard
 ```
 
 ---
@@ -383,7 +383,7 @@ gnome-extension/
 Activación manual:
 
 ```bash
-gnome-extensions enable hide-input-source@teclado-indicador
+gnome-extensions enable hide-input-source@urownkeyboard
 ```
 
 ---

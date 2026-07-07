@@ -27,6 +27,7 @@ CURRENT_PROFILE = CONFIG / "current-profile.json"
 SCRIPT_DIR = Path(__file__).resolve().parent
 LOCAL_UOK_BIN = SCRIPT_DIR / "uok"
 UOK_BIN = LOCAL_UOK_BIN if LOCAL_UOK_BIN.exists() else HOME / ".local" / "bin" / "uok"
+GNOME_HIDE_EXTENSION_UUID = "hide-input-source@urownkeyboard"
 
 for d in [PROFILES, XKB_DIR, KEYD_DIR, USER_XKB]:
     d.mkdir(parents=True, exist_ok=True)
@@ -39,6 +40,37 @@ def run(cmd):
 
 def notify(title, msg):
     run(f'notify-send {shlex.quote(title)} {shlex.quote(msg)}')
+
+def ensure_gnome_hide_extension_enabled():
+    text = " ".join([
+        os.environ.get("XDG_CURRENT_DESKTOP", ""),
+        os.environ.get("DESKTOP_SESSION", ""),
+        os.environ.get("XDG_SESSION_DESKTOP", ""),
+    ]).lower()
+    if "gnome" not in text:
+        return
+    ext_dir = HOME / ".local" / "share" / "gnome-shell" / "extensions" / GNOME_HIDE_EXTENSION_UUID
+    if not ext_dir.exists():
+        return
+    try:
+        subprocess.run(
+            ["gsettings", "set", "org.gnome.shell", "disable-user-extensions", "false"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except Exception:
+        pass
+    try:
+        subprocess.run(
+            ["gnome-extensions", "enable", GNOME_HIDE_EXTENSION_UUID],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except Exception:
+        pass
+
 
 def source_label(source_type, source_id):
     names = {"es":"Spanish","us":"US English","de":"German","fr":"French","it":"Italiano","pt":"Portuguese",}
@@ -538,6 +570,13 @@ try:
     uok_install_backend_overrides(__import__(__name__))
 except Exception as exc:
     print(f'UOK backend overrides disabled: {exc}')
+try:
+    from uok_backends.native_indicators import install as uok_install_native_indicator_backend
+    uok_install_native_indicator_backend(__import__(__name__))
+except Exception as exc:
+    print(f'UOK native indicator backend disabled: {exc}')
+ensure_gnome_hide_extension_enabled()
+call_optional_hook("uok_hide_all_native_indicators")
 call_optional_hook("uok_hide_kde_ibus_native_menu")
 call_optional_hook("ocultar_menu_xfce")
 sincronizar_estado_al_arrancar()
@@ -546,6 +585,10 @@ indicator.set_menu(uok_main_menu)
 try:
     _uok_last_menu_signature = _uok_menu_state_signature()
     GLib.timeout_add_seconds(2, _uok_autorefresh_menu_tick)
+except Exception:
+    pass
+try:
+    GLib.timeout_add_seconds(10, lambda: call_optional_hook("uok_hide_all_native_indicators") or True)
 except Exception:
     pass
 

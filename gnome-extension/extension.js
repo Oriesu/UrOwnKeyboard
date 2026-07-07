@@ -17,17 +17,24 @@ function getInputSourceManager() {
 export default class HideInputSourceExtension extends Extension {
     enable() {
         this._hidden = [];
-        this._timeoutId = 0;
+        this._hideTimeoutId = 0;
+        this._requestTimeoutId = 0;
         this._lastRequest = '';
 
         this._hideNativeInputIndicator();
+        this._startHideWatcher();
         this._startRequestWatcher();
     }
 
     disable() {
-        if (this._timeoutId) {
-            GLib.source_remove(this._timeoutId);
-            this._timeoutId = 0;
+        if (this._hideTimeoutId) {
+            GLib.source_remove(this._hideTimeoutId);
+            this._hideTimeoutId = 0;
+        }
+
+        if (this._requestTimeoutId) {
+            GLib.source_remove(this._requestTimeoutId);
+            this._requestTimeoutId = 0;
         }
 
         for (const obj of this._hidden || []) {
@@ -36,6 +43,11 @@ export default class HideInputSourceExtension extends Extension {
         }
 
         this._hidden = [];
+    }
+
+    _rememberHidden(obj) {
+        if (!this._hidden.includes(obj))
+            this._hidden.push(obj);
     }
 
     _hideNativeInputIndicator() {
@@ -60,10 +72,21 @@ export default class HideInputSourceExtension extends Extension {
             for (const obj of objects) {
                 if (obj && typeof obj.hide === 'function') {
                     obj.hide();
-                    this._hidden.push(obj);
+                    this._rememberHidden(obj);
                 }
             }
         }
+    }
+
+    _startHideWatcher() {
+        this._hideTimeoutId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            1,
+            () => {
+                this._hideNativeInputIndicator();
+                return GLib.SOURCE_CONTINUE;
+            }
+        );
     }
 
     _requestPath() {
@@ -80,7 +103,7 @@ export default class HideInputSourceExtension extends Extension {
     }
 
     _startRequestWatcher() {
-        this._timeoutId = GLib.timeout_add_seconds(
+        this._requestTimeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT,
             1,
             () => {

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 APP_NAME="teclado-indicador"
-EXT_UUID="hide-input-source@teclado-indicador"
+EXT_UUID="hide-input-source@urownkeyboard"
 echo "Installing dependencias..."
 sudo apt update
 sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 zenity gkbd-capplet gnome-shell-extension-appindicator x11-xkb-utils xkb-data libxml2-utils libxkbcommon-tools fonts-noto-core fonts-noto-extra xfconf
@@ -95,8 +95,10 @@ mkdir -p "$HOME/.cache/urownkeyboard"
             XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
             DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
             XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+            XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-}" \
             XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-}" \
             DESKTOP_SESSION="${DESKTOP_SESSION:-}" \
+            XDG_SESSION_DESKTOP="${XDG_SESSION_DESKTOP:-}" \
             PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/bin" \
             /usr/bin/python3 "$INDICATOR"
     else
@@ -128,6 +130,7 @@ if command -v gnome-shell >/dev/null 2>&1; then
     cp gnome-extension/metadata.json "$EXT_DIR/metadata.json"
     cp gnome-extension/extension.js "$EXT_DIR/extension.js"
     gsettings set org.gnome.shell disable-user-extensions false 2>/dev/null || true
+    gnome-extensions enable "$EXT_UUID" 2>/dev/null || true
 else
     echo "GNOME Shell not detected. Skipping the GNOME-specific extension."
 fi
