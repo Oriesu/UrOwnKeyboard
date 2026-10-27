@@ -33,6 +33,7 @@ copy_file uok_xkb_sources.py
 copy_dir helpers
 copy_dir uok_backends
 copy_dir gnome-extension
+copy_dir docs
 if [ -f aplicar-editor-visual-uok.sh ]; then
     cp aplicar-editor-visual-uok.sh "$PKG_DIR/"
 fi
